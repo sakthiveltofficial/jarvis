@@ -47,10 +47,45 @@ fn python_for(dir: &Path) -> PathBuf {
     PathBuf::from(if cfg!(windows) { "python" } else { "python3" })
 }
 
+/// The self-contained backend that the release installer ships (PyInstaller build), if present.
+fn bundled_backend(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if std::env::var("JARVIS_PYTHON").is_ok() || std::env::var("JARVIS_BACKEND_DIR").is_ok() {
+        return None; // explicit dev override
+    }
+    let exe = if cfg!(windows) { "jarvis-backend.exe" } else { "jarvis-backend" };
+    let res = app.path().resource_dir().ok()?;
+    let p = res.join("backend-bin").join(exe);
+    p.exists().then_some(p)
+}
+
+fn hide_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = cmd;
+}
+
 fn spawn_backend(app: &tauri::AppHandle) -> Option<Child> {
     if backend_running() {
         println!("[jarvis] backend already running on port {PORT}");
         return None;
+    }
+    if let Some(exe) = bundled_backend(app) {
+        println!("[jarvis] starting bundled backend: {}", exe.display());
+        let mut cmd = Command::new(&exe);
+        cmd.env("JARVIS_PORT", PORT.to_string()).stdin(Stdio::null());
+        if let Some(dir) = exe.parent() {
+            cmd.current_dir(dir);
+        }
+        hide_window(&mut cmd);
+        match cmd.spawn() {
+            Ok(child) => return Some(child),
+            Err(e) => eprintln!("[jarvis] failed to start bundled backend: {e}"),
+        }
     }
     let Some(dir) = backend_dir(app) else {
         eprintln!("[jarvis] could not find the backend folder; set JARVIS_BACKEND_DIR");
@@ -65,12 +100,7 @@ fn spawn_backend(app: &tauri::AppHandle) -> Option<Child> {
         .env("PYTHONUNBUFFERED", "1")
         .env("JARVIS_PORT", PORT.to_string())
         .stdin(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    hide_window(&mut cmd);
     match cmd.spawn() {
         Ok(child) => Some(child),
         Err(e) => {

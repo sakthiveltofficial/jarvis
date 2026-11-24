@@ -11,3 +11,6 @@ app/src-tauri/gen/
 .env.*
 settings.json
 *.log
+backend/build/
+backend/dist/
+backend/*.spec

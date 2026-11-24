@@ -135,12 +135,29 @@ Jarvis has the same power over your machine as your user account, and more when 
 Everything lives in `~/.jarvis/`: `settings.json` (including API keys, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech models) and `browser-profile/` (the automation browser's logins).
 Environment variables like `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ELEVENLABS_API_KEY` and `FISH_AUDIO_API_KEY` also work.
 
-## Building an installer
+## Download (Windows)
 
-`cd app && npm run build` produces an installer that includes the backend source. The installed app still
-needs Python with the requirements installed: set `JARVIS_PYTHON` to that interpreter (or keep the repo's
-`backend/.venv`). Freezing the backend into a single sidecar binary (PyInstaller) is the next step for a
-one-click install.
+Grab the latest `Jarvis_*_x64-setup.exe` from [Releases](../../releases). It includes everything (no Python
+or Node needed). The installer isn't code-signed yet, so SmartScreen may ask you to confirm ("More info → Run anyway").
+
+## Releases and CI
+
+- `.github/workflows/ci.yml` runs on every push and PR: Python lint and smoke tests (graph memory,
+  interruption rules, API routes), UI syntax checks, and a Windows `cargo check` of the Tauri shell.
+- `.github/workflows/release.yml` runs when you push a tag like `v0.3.0` (or by hand from the Actions tab).
+  It freezes the Python backend with PyInstaller (`backend/build_backend.py`), smoke-tests it, builds the
+  Tauri NSIS installer with the frozen backend inside (`app/src-tauri/tauri.release.conf.json`), and publishes
+  it as a GitHub Release.
+
+To cut a release: bump the version in `app/package.json`, `app/src-tauri/tauri.conf.json` and
+`app/src-tauri/Cargo.toml`, commit, then `git tag v0.x.y && git push origin v0.x.y`.
+
+To build the same installer locally on Windows:
+
+```powershell
+cd backend; .venv\Scripts\python -m pip install pyinstaller; .venv\Scripts\python build_backend.py
+cd ..\app; npx tauri build --config src-tauri/tauri.release.conf.json
+```
 
 ## Prototype limits / next steps
 

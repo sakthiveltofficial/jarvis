@@ -266,7 +266,7 @@ places, organisations, projects, devices and accounts, important events and date
 "remember this" requests and corrections.
 
 Rules
-- Refer to the user as "USER". Use clear canonical names for everything else ("Mom", "Webnox", "Jarvis project").
+- Refer to the user as "USER". Use clear canonical names for everything else ("Mom", "Acme Corp", "Jarvis project").
 - type is one of: Person, Organization, Place, Project, Preference, Event, Task, Thing, Concept, Device, Skill.
 - relation is a short snake_case verb phrase (works_at, likes, lives_in, sister_of, deadline_on, uses).
 - fact is one self-contained sentence in third person, with dates when known (today is {today}).
