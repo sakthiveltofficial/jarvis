@@ -11,6 +11,12 @@ from . import config
 WHISPER_DIR = config.MODELS_DIR / "whisper"
 PIPER_DIR = config.MODELS_DIR / "piper"
 KOKORO_DIR = config.MODELS_DIR / "kokoro"
+WAKE_DIR = config.MODELS_DIR / "wakeword"
+
+# openWakeWord (Apache-2.0) feature models + pre-trained wake words, ~1.3 MB each
+WAKE_BASE = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/"
+WAKE_FEATURES = ["melspectrogram.onnx", "embedding_model.onnx"]
+WAKE_WORDS = {"hey_jarvis": "hey_jarvis_v0.1.onnx", "alexa": "alexa_v0.1.onnx", "hey_mycroft": "hey_mycroft_v0.1.onnx"}
 
 WHISPER_MODELS = {   # name -> approx size MB (int8 CTranslate2 weights from HF)
     "tiny": 75, "tiny.en": 75, "base": 145, "base.en": 145, "small": 484, "small.en": 484,
@@ -56,7 +62,13 @@ def whisper_path(name: str) -> Path:
     return WHISPER_DIR / name
 
 
+def wake_paths(name: str) -> list[Path]:
+    return [WAKE_DIR / f for f in WAKE_FEATURES + [WAKE_WORDS.get(name, WAKE_WORDS["hey_jarvis"])]]
+
+
 def is_installed(kind: str, name: str) -> bool:
+    if kind == "wakeword":
+        return all(p.exists() for p in wake_paths(name))
     if kind == "whisper":
         return (whisper_path(name) / "model.bin").exists()
     if kind == "piper":
@@ -72,6 +84,7 @@ def catalog() -> dict:
         "piper": [{"id": v, "label": l, "size_mb": 63, "installed": is_installed("piper", v)} for v, l in PIPER_VOICES.items()],
         "kokoro": [{"id": q, "size_mb": 90 if q == "int8" else 310, "installed": is_installed("kokoro", q)} for q in ("int8", "fp32")],
         "kokoro_voices": KOKORO_VOICES,
+        "wakeword": [{"id": w, "size_mb": 4, "installed": is_installed("wakeword", w)} for w in WAKE_WORDS],
         "progress": PROGRESS,
     }
 
@@ -108,6 +121,11 @@ def _download(kind: str, name: str, key: str):
             if not voices.exists():
                 _fetch(KOKORO_FILES["voices"], voices, key, 0.2, 0.0)
             _fetch(KOKORO_FILES[name], model, key, 0.8, 0.2)
+        elif kind == "wakeword":
+            paths = wake_paths(name)
+            for i, p in enumerate(paths):
+                if not p.exists():
+                    _fetch(WAKE_BASE + p.name, p, key, 1 / len(paths), i / len(paths))
         elif kind == "whisper":
             from faster_whisper import download_model
             out = whisper_path(name)

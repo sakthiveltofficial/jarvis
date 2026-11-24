@@ -105,6 +105,24 @@ class AnthropicProvider(Provider):
             blocks.append({"type": "tool_result", "tool_use_id": call.id, "content": content,
                            "is_error": out.is_error})
         self.history.append({"role": "user", "content": blocks})
+        self._prune_images()
+
+    KEEP_IMAGES = 3
+
+    def _prune_images(self):
+        """Screenshots are big: keep only the latest few in the history."""
+        seen = 0
+        for msg in reversed(self.history):
+            if msg["role"] != "user" or not isinstance(msg["content"], list):
+                continue
+            for b in msg["content"]:
+                if not isinstance(b, dict) or b.get("type") != "tool_result" or not isinstance(b.get("content"), list):
+                    continue
+                if any(c.get("type") == "image" for c in b["content"]):
+                    seen += 1
+                    if seen > self.KEEP_IMAGES:
+                        b["content"] = [c for c in b["content"] if c.get("type") != "image"] + [
+                            {"type": "text", "text": "[older screenshot removed]"}]
 
 
 # --------------------------------------------------------------------------- OpenAI-compatible
@@ -180,19 +198,26 @@ def make_provider(settings: dict) -> Provider:
     return AnthropicProvider(settings) if kind == "anthropic" else OpenAICompatProvider(settings)
 
 
-def complete(settings: dict, system: str, prompt: str, max_tokens: int = 1500) -> str:
-    """One-shot text completion with the configured provider (used for memory extraction)."""
+def complete(settings: dict, system: str, prompt: str, max_tokens: int = 1500, images: list[str] | None = None,
+             model: str | None = None) -> str:
+    """One-shot completion with the configured provider (memory extraction, teach mode, screen glances).
+    images: base64 PNGs, sent only when the model can see images."""
     llm = settings["llm"]
     kind = llm.get("kind") or config.LLM_PRESETS.get(llm.get("provider"), {}).get("kind", "openai")
+    images = images if (images and llm.get("vision")) else []
     if kind == "anthropic":
         import anthropic
         kw = {"api_key": config.api_key(settings, "anthropic") or None}
         if llm.get("base_url"):
             kw["base_url"] = llm["base_url"]
         client = anthropic.Anthropic(**kw)
-        model = llm.get("model") or "claude-opus-5-5"
+        model = model or llm.get("model") or "claude-opus-5-5"
+        content: list | str = prompt
+        if images:
+            content = [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b}}
+                       for b in images] + [{"type": "text", "text": prompt}]
         params = dict(model=model, max_tokens=max_tokens, system=system,
-                      messages=[{"role": "user", "content": prompt}])
+                      messages=[{"role": "user", "content": content}])
         if llm.get("effort"):
             params["output_config"] = {"effort": "low"}
         if model in _FALLBACK_MODELS:
@@ -205,7 +230,11 @@ def complete(settings: dict, system: str, prompt: str, max_tokens: int = 1500) -
     from openai import OpenAI
     key = config.api_key(settings, llm.get("provider", "custom")) or "not-needed"
     client = OpenAI(api_key=key, base_url=llm.get("base_url") or None)
-    resp = client.chat.completions.create(model=llm.get("model"), temperature=0, max_tokens=max_tokens,
+    content = prompt
+    if images:
+        content = [{"type": "text", "text": prompt}] + [
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b}"}} for b in images]
+    resp = client.chat.completions.create(model=model or llm.get("model"), temperature=0, max_tokens=max_tokens,
                                           messages=[{"role": "system", "content": system},
-                                                    {"role": "user", "content": prompt}])
+                                                    {"role": "user", "content": content}])
     return resp.choices[0].message.content or ""

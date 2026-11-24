@@ -83,8 +83,36 @@ DEFAULTS = {
         "max_steps": 40,
         "speak_replies": True,
         "headless_browser": False,
+        "self_check": True,            # look again after clicking/typing to confirm it worked
     },
+    "voice": {
+        "mode": "wake",                # off | wake ("Hey Jarvis") | handsfree (always listening)
+        "wake_word": "hey_jarvis",
+        "wake_threshold": 0.5,
+        "listen_s": 8,                 # after the wake word, how long to wait for you to start talking
+        "follow_up_s": 10,             # after I reply, keep listening this long without the wake word
+        "chime": True,
+        "emotion": True,               # notice how you sound and adapt my tone
+    },
+    "briefings": {
+        "location": "",                # city for the weather; empty = guess from IP
+        "morning": {"enabled": False, "time": "08:00", "weekdays_only": False},
+        "evening": {"enabled": False, "time": "18:30", "weekdays_only": False},
+    },
+    "awareness": {
+        "enabled": False,              # glance at the screen and offer help with clear problems
+        "interval_s": 60,
+        "cooldown_min": 10,
+        "model": "",                   # optional cheaper model for glances (same provider)
+    },
+    "mcp": {"servers": []},            # [{name, command, args, env} | {name, url, headers}, enabled, trusted]
+    "node": {                          # let other PCs control this one
+        "enabled": False, "port": 8766, "token": "", "name": "", "allow_elevated": False,
+    },
+    "nodes": [],                       # other PCs this one controls: [{name, url, token}]
 }
+
+SECRET_KEYS = ("env", "headers")       # dict fields inside mcp servers whose values are masked
 
 _lock = threading.Lock()
 
@@ -96,6 +124,40 @@ def _deep_merge(base: dict, over: dict) -> dict:
             out[k] = _deep_merge(out[k], v)
         else:
             out[k] = v
+    return out
+
+
+def save_raw(data: dict) -> dict:
+    """Write settings as-is (used when lists must replace, not merge)."""
+    with _lock:
+        SETTINGS_FILE.write_text(json.dumps(data, indent=2), "utf-8")
+        try:
+            os.chmod(SETTINGS_FILE, 0o600)
+        except OSError:
+            pass
+    return data
+
+
+def _mask(v: str) -> str:
+    v = str(v or "")
+    return ("••••" + v[-4:]) if len(v) > 8 else ("••••" if v else "")
+
+
+def restore_masked(new: list, old: list) -> list:
+    """The UI only sees masked secrets; put the real values back for unchanged fields (matched by name)."""
+    by_name = {o.get("name"): o for o in old}
+    out = []
+    for item in new:
+        item = copy.deepcopy(item)
+        prev = by_name.get(item.get("name"), {})
+        for k in SECRET_KEYS:
+            if isinstance(item.get(k), dict):
+                for kk, vv in item[k].items():
+                    if str(vv).startswith("••••"):
+                        item[k][kk] = (prev.get(k) or {}).get(kk, "")
+        if str(item.get("token", "")).startswith("••••"):
+            item["token"] = prev.get("token", "")
+        out.append(item)
     return out
 
 
@@ -134,4 +196,10 @@ def public(settings: dict) -> dict:
     """Settings safe to send to the UI (keys masked)."""
     s = copy.deepcopy(settings)
     s["api_keys"] = {k: ("••••" + v[-4:] if v else "") for k, v in s.get("api_keys", {}).items()}
+    for srv in s.get("mcp", {}).get("servers") or []:
+        for k in SECRET_KEYS:
+            if isinstance(srv.get(k), dict):
+                srv[k] = {kk: _mask(vv) for kk, vv in srv[k].items()}
+    for n in s.get("nodes") or []:
+        n["token"] = _mask(n.get("token", ""))
     return s

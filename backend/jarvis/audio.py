@@ -25,12 +25,18 @@ class Mic:
 
     def __init__(self, settings: dict, on_level: Callable[[float], None],
                  on_utterance: Callable[[np.ndarray], None],
-                 on_barge: Callable[[np.ndarray], bool] | None = None):
+                 on_barge: Callable[[np.ndarray], bool] | None = None,
+                 on_wake: Callable[[], None] | None = None):
         self.settings = settings
         self.on_level = on_level
         self.on_utterance = on_utterance
         self.on_barge = on_barge
-        self.mode = "off"          # off | ptt | handsfree
+        self.on_wake = on_wake
+        self.wake = None           # WakeWord detector, used in "wake" mode
+        self.idle_mode = "off"     # mode to return to after push-to-talk: off | wake | handsfree
+        self.in_speech = False     # hands-free: currently capturing an utterance
+        self.ignore_until = 0.0    # drop audio until then (our own chime)
+        self.mode = "off"          # off | ptt | handsfree | wake
         self.speaking = False      # True while the assistant's voice is playing
         self.out_level = 0.0       # RMS of what the speaker is playing right now (echo estimate)
         self._q: queue.Queue = queue.Queue()
@@ -72,17 +78,28 @@ class Mic:
 
     def ptt_stop(self) -> np.ndarray:
         with self._lock:
-            self.mode = "handsfree" if self._handsfree_wanted else "off"
+            self.mode = self.idle_mode
             buf, self._ptt_buf = self._ptt_buf, []
         return np.concatenate(buf) if buf else np.zeros(0, np.float32)
 
     def set_handsfree(self, on: bool):
-        self._handsfree_wanted = on
-        if on:
+        self.set_idle_mode("handsfree" if on else "off")
+
+    def set_idle_mode(self, mode: str):
+        """off | wake (listen only for the wake word) | handsfree (always listening)."""
+        if mode == "wake" and self.wake is None:
+            mode = "handsfree"
+        self.idle_mode = mode
+        self._handsfree_wanted = mode == "handsfree"
+        if mode != "off":
             self._ensure_stream()
-            self.mode = "handsfree"
-        elif self.mode == "handsfree":
-            self.mode = "off"
+        if self.mode != "ptt":
+            self.mode = mode
+
+    def engage(self):
+        """Wake word heard: listen for a request (hands-free) until the session puts us back to sleep."""
+        self.mode = "handsfree"
+        self.ignore_until = time.time() + 0.25
 
     # worker -------------------------------------------------------------------
     def feed(self, block: np.ndarray):
@@ -119,10 +136,30 @@ class Mic:
                 with self._lock:
                     self._ptt_buf.append(block)
                 continue
+            if self.wake is not None and (self.mode == "wake" or (self.mode == "handsfree" and self.speaking
+                                                                  and self.idle_mode == "wake")):
+                try:
+                    fired = self.wake.process(block)
+                except Exception:  # noqa: BLE001
+                    fired = False
+                if fired:
+                    in_speech, speech, loud, silent_ms, cand, checking = False, [], 0, 0, [], None
+                    preroll.clear()
+                    self.engage()
+                    if self.on_wake:
+                        threading.Thread(target=self.on_wake, daemon=True).start()
+                    continue
+                if self.mode == "wake":
+                    self.in_speech = False
+                    continue
+            if now < self.ignore_until:
+                continue
             if self.mode != "handsfree":
                 in_speech, speech, loud, silent_ms, cand, checking = False, [], 0, 0, [], None
+                self.in_speech = False
                 preroll.clear()
                 continue
+            self.in_speech = in_speech or checking is not None
 
             thr = max(floor * float(a.get("vad_threshold", 2.5)), 0.012)
 

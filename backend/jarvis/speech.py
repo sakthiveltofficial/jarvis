@@ -105,13 +105,18 @@ class TTS:
         self.s = settings
         self.cfg = settings["tts"]
 
-    def synthesize(self, text: str) -> tuple[np.ndarray, int]:
+    def synthesize(self, text: str, style: dict | None = None) -> tuple[np.ndarray, int]:
+        """style (optional, from emotion.STYLES): speed multiplier, instructions, stability, style."""
         p = self.cfg.get("provider", "piper")
         fn = {"piper": self._piper, "kokoro": self._kokoro, "elevenlabs": self._elevenlabs,
               "fish_audio": self._fish, "openai": self._openai}.get(p)
         if fn is None:
             raise ValueError(f"Unknown TTS provider {p}")
+        self.style = style or {}
         return fn(text)
+
+    def _speed(self) -> float:
+        return (float(self.cfg.get("speed", 1.0)) or 1.0) * float(getattr(self, "style", {}).get("speed", 1.0))
 
     # local ------------------------------------------------------------------
     def _piper(self, text: str):
@@ -124,7 +129,7 @@ class TTS:
                 onnx, _ = models.piper_paths(voice_id)
                 self._cache[key] = PiperVoice.load(str(onnx))
             voice = self._cache[key]
-        speed = float(self.cfg.get("speed", 1.0)) or 1.0
+        speed = self._speed()
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
             try:  # piper-tts >= 1.3
@@ -146,7 +151,7 @@ class TTS:
             k = self._cache[key]
         voice = self.cfg.get("kokoro_voice", "bm_george")
         lang = "en-gb" if voice.startswith("b") else "en-us"
-        samples, sr = k.create(text, voice=voice, speed=float(self.cfg.get("speed", 1.0)), lang=lang)
+        samples, sr = k.create(text, voice=voice, speed=self._speed(), lang=lang)
         return np.asarray(samples, dtype=np.float32), sr
 
     # cloud ------------------------------------------------------------------
@@ -154,10 +159,17 @@ class TTS:
         vid = self.cfg.get("elevenlabs_voice_id")
         r = httpx.post(f"https://api.elevenlabs.io/v1/text-to-speech/{vid}?output_format=pcm_22050",
                        headers={"xi-api-key": config.api_key(self.s, "elevenlabs")},
-                       json={"text": text, "model_id": self.cfg.get("elevenlabs_model", "eleven_flash_v2_5")},
-                       timeout=60)
+                       json=self._el_body(text), timeout=60)
         r.raise_for_status()
         return pcm16_to_float(r.content), 22050
+
+    def _el_body(self, text: str) -> dict:
+        body = {"text": text, "model_id": self.cfg.get("elevenlabs_model", "eleven_flash_v2_5")}
+        st = getattr(self, "style", {})
+        if st:
+            body["voice_settings"] = {"stability": st.get("stability", 0.5), "similarity_boost": 0.75,
+                                      "style": st.get("style", 0.0), "speed": max(0.7, min(1.2, self._speed()))}
+        return body
 
     def _fish(self, text: str):
         body = {"text": text, "format": "wav", "latency": "balanced"}
@@ -173,7 +185,13 @@ class TTS:
     def _openai(self, text: str):
         from openai import OpenAI
         client = OpenAI(api_key=config.api_key(self.s, "openai"))
-        r = client.audio.speech.create(model=self.cfg.get("openai_model", "gpt-4o-mini-tts"),
-                                       voice=self.cfg.get("openai_voice", "onyx"), input=text,
-                                       response_format="pcm")
+        model = self.cfg.get("openai_model", "gpt-4o-mini-tts")
+        kw = {}
+        st = getattr(self, "style", {})
+        if st.get("instructions") and "gpt-4o" in model:
+            kw["instructions"] = st["instructions"]
+        if abs(self._speed() - 1.0) > 0.01:
+            kw["speed"] = self._speed()
+        r = client.audio.speech.create(model=model, voice=self.cfg.get("openai_voice", "onyx"), input=text,
+                                       response_format="pcm", **kw)
         return pcm16_to_float(r.read()), 24000

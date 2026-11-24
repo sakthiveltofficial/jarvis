@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import audio, config, models
+from . import audio, config, models, nodes, skills
 from .agent import Session
 from .speech import TTS, to_wav_bytes
 
@@ -152,6 +152,77 @@ def graph_clear():
     return {"ok": True}
 
 
+# --------------------------------------------------------------------------- v0.4: agenda, skills, apps, PCs
+@app.get("/api/agenda")
+def agenda():
+    return session.agenda()
+
+
+@app.post("/api/voice_mode")
+async def voice_mode(body: dict):
+    await asyncio.to_thread(session.set_voice_mode, body.get("mode", "off"))
+    return {"mode": session.voice_mode, "wake_ready": session.mic.wake is not None}
+
+
+@app.delete("/api/schedules/{job_id}")
+def cancel_schedule(job_id: str):
+    ok = session.scheduler.cancel(job_id)
+    session.emit({"type": "agenda"})
+    return {"ok": ok}
+
+
+@app.post("/api/background/{bid}/cancel")
+def cancel_bg(bid: str):
+    session.cancel_background(bid)
+    return {"ok": True}
+
+
+@app.get("/api/skills")
+def list_skills():
+    return {"skills": skills.list_skills()}
+
+
+@app.get("/api/skills/{sid}")
+def get_skill(sid: str):
+    sk = skills.get(sid, count_use=False)
+    if not sk:
+        raise HTTPException(404, "not found")
+    return sk
+
+
+@app.delete("/api/skills/{sid}")
+def delete_skill(sid: str):
+    return {"ok": skills.delete(sid)}
+
+
+@app.post("/api/teach")
+async def teach(body: dict):
+    if body.get("action") == "start":
+        msg = session.teach_start(body.get("name", ""))
+        session.announce(msg, "teach")
+    else:
+        msg = await asyncio.to_thread(session.teach_stop)
+    return {"message": msg, "on": session.teacher is not None}
+
+
+@app.get("/api/mcp")
+def mcp_status():
+    return {"servers": session.mcp.status()}
+
+
+@app.get("/api/node")
+def node_info():
+    cfg = session.settings.get("node", {})
+    return {"enabled": bool(cfg.get("enabled")), "running": session.node_server is not None,
+            "port": int(cfg.get("port") or nodes.DEFAULT_PORT), "token": cfg.get("token", ""),
+            "addresses": nodes.lan_addresses(), "name": cfg.get("name") or __import__("platform").node()}
+
+
+@app.get("/api/nodes/status")
+async def nodes_status():
+    return {"pcs": await asyncio.gather(*[asyncio.to_thread(nodes.ping, p) for p in session.settings.get("nodes") or []])}
+
+
 # --------------------------------------------------------------------------- WebSocket
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
@@ -162,7 +233,8 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     clients.add(ws)
     await ws.send_json({"type": "state", "state": session.state})
-    await ws.send_json({"type": "handsfree", "on": session.mic.mode == "handsfree"})
+    await ws.send_json({"type": "handsfree", "on": session.voice_mode != "off"})
+    await ws.send_json({"type": "voice_mode", "mode": session.voice_mode, "wake_ready": session.mic.wake is not None})
     try:
         while True:
             msg = await ws.receive_json()
@@ -179,9 +251,11 @@ async def ws_endpoint(ws: WebSocket):
                 session.resolve_confirm(msg["id"], bool(msg.get("approve")))
             elif t == "stop":
                 await session.interrupt()
-                session.set_state("listening" if session.mic.mode == "handsfree" else "idle")
+                session.set_state(session._idle_state())
             elif t == "stop_speaking":
                 session.stop_speaking()
+            elif t == "voice_mode":
+                await asyncio.to_thread(session.set_voice_mode, msg.get("mode", "off"))
     except WebSocketDisconnect:
         pass
     finally:

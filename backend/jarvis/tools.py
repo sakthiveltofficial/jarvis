@@ -41,8 +41,12 @@ class ToolSpec:
     params: dict
     required: list = field(default_factory=list)
     vision_only: bool = False
+    raw_schema: dict | None = None
+    group: str = ""            # "" always | "main" main conversation only | "nodes" when other PCs are paired
 
     def schema(self) -> dict:
+        if self.raw_schema is not None:
+            return self.raw_schema
         return {"type": "object", "properties": self.params, "required": self.required}
 
 
@@ -57,8 +61,10 @@ SPECS = [
               "timeout": {"type": "integer", "description": "Seconds, default 120."},
               "cwd": {"type": "string"}},
              ["command"]),
-    ToolSpec("screenshot", "Take a screenshot of the whole screen. Returns the image plus its size; "
-             "use those image coordinates for mouse tools.", {}, [], vision_only=True),
+    ToolSpec("screenshot", "Take a screenshot. Returns the image plus its size and the list of monitors; "
+             "mouse coordinates are relative to the latest screenshot. monitor: 1 = primary (default: the last one "
+             "you looked at), 2.. = other screens, 0 = all screens stitched together.",
+             {"monitor": {"type": "integer"}}, [], vision_only=True),
     ToolSpec("mouse",
              "Mouse control using screenshot coordinates. action: move | click | double_click | right_click | "
              "drag | scroll. For drag give to_x/to_y. For scroll give amount (positive = up).",
@@ -104,12 +110,77 @@ SPECS = [
              "preferences, past events). Use it whenever past context could help and it isn't already in "
              "the <memory> block.",
              {"query": {"type": "string"}}, ["query"]),
-    ToolSpec("system_info", "CPU, memory, disk, battery and OS details.", {}, []),
+    ToolSpec("system_info", "CPU, memory, disk, battery, monitors and OS details.", {}, []),
+    ToolSpec("weather", "Current weather and a 3-day forecast. location: city name; empty = the user's home "
+             "location from settings, or a guess from the IP address.", {"location": {"type": "string"}}, []),
+    ToolSpec("plan",
+             "Show and track a step-by-step plan for multi-step jobs (3+ steps). action=set with `steps` (short "
+             "imperative phrases) and a `title` before you start; action=update with `step` (1-based) and `status` "
+             "(in_progress | done | failed | skipped) and an optional short `note` as you go. The user sees the plan "
+             "and its progress live; each done step is a checkpoint.",
+             {"action": {"type": "string", "enum": ["set", "update", "clear"]}, "title": {"type": "string"},
+              "steps": {"type": "array", "items": {"type": "string"}}, "step": {"type": "integer"},
+              "status": {"type": "string", "enum": ["in_progress", "done", "failed", "skipped"]},
+              "note": {"type": "string"}}, ["action"]),
+    ToolSpec("schedule",
+             "Schedule a reminder (you'll say `message` at that time) or a task (you'll carry out `message` as an "
+             "instruction at that time, e.g. 'clean the Downloads folder'). One-off: give `at` as local "
+             "'YYYY-MM-DDTHH:MM' or `in_minutes`. Repeating: repeat = daily | weekdays | weekly (with `days` like "
+             "['mon','thu']) | hourly | minutes (with `every_minutes`), plus `time` 'HH:MM'.",
+             {"title": {"type": "string"}, "message": {"type": "string"},
+              "kind": {"type": "string", "enum": ["reminder", "task"]}, "at": {"type": "string"},
+              "in_minutes": {"type": "number"},
+              "repeat": {"type": "string", "enum": ["none", "daily", "weekdays", "weekly", "hourly", "minutes"]},
+              "time": {"type": "string"}, "days": {"type": "array", "items": {"type": "string"}},
+              "every_minutes": {"type": "integer"}}, ["message"]),
+    ToolSpec("list_schedules", "List scheduled reminders, tasks and briefings with their next run time.", {}, []),
+    ToolSpec("cancel_schedule", "Cancel a scheduled job by id (from list_schedules) or exact title.",
+             {"id": {"type": "string"}}, ["id"]),
+    ToolSpec("use_skill", "Load a saved skill (a workflow you learned) by name, to follow its steps.",
+             {"name": {"type": "string"}}, ["name"]),
+    ToolSpec("save_skill",
+             "Save or improve a reusable skill: a workflow you can repeat later. Use it after finishing a multi-step "
+             "job the user is likely to ask for again, when the user says 'remember how to do this', or after using a "
+             "skill when you learned something (same name = new version; put what changed in `notes`).",
+             {"name": {"type": "string"}, "description": {"type": "string"},
+              "steps": {"type": "string", "description": "Numbered steps in Markdown."},
+              "notes": {"type": "string"}}, ["name", "description", "steps"]),
+    ToolSpec("teach", "Teach mode: action=start begins watching the user demonstrate a workflow (window changes, "
+             "clicks, typing, screenshots, narration); action=stop ends it and turns it into a saved skill.",
+             {"action": {"type": "string", "enum": ["start", "stop", "cancel"]},
+              "name": {"type": "string", "description": "Optional name for the skill."}}, ["action"], group="main"),
+    ToolSpec("background_task",
+             "Run a long job in the background with its own agent while you keep chatting with the user "
+             "(research, downloads, file organising, long builds). action=start with a complete, self-contained "
+             "`goal`; action=list; action=status/cancel with `id`. Background agents can't use the mouse or "
+             "keyboard (so they don't fight the user); they use the shell, files, browser and connected apps. "
+             "You'll be told when one finishes.",
+             {"action": {"type": "string", "enum": ["start", "list", "status", "cancel"]},
+              "goal": {"type": "string"}, "id": {"type": "string"}}, ["action"], group="main"),
+    ToolSpec("remote_pc",
+             "Run one of your tools on another paired computer. `pc` is its name (see the PCs list in your "
+             "instructions), `tool` is a tool name like run_shell, screenshot, mouse, keyboard, open, list_windows, "
+             "read_file, write_file, list_dir, clipboard, system_info, and `args` its arguments.",
+             {"pc": {"type": "string"}, "tool": {"type": "string"}, "args": {"type": "object"}},
+             ["pc", "tool"], group="nodes"),
 ]
 
+NODE_TOOLS = {"run_shell", "screenshot", "mouse", "keyboard", "open", "list_windows", "read_file", "write_file",
+              "list_dir", "clipboard", "wait", "system_info", "weather"}
+GUI_TOOLS = {"mouse", "keyboard", "screenshot", "teach"}
 
-def specs_for(vision: bool) -> list[ToolSpec]:
-    return [s for s in SPECS if vision or not s.vision_only]
+
+def specs_for(vision: bool, main: bool = True, nodes: bool = False, exclude: set | None = None) -> list[ToolSpec]:
+    out = []
+    for s in SPECS:
+        if s.vision_only and not vision:
+            continue
+        if (s.group == "main" and not main) or (s.group == "nodes" and not nodes):
+            continue
+        if exclude and s.name in exclude:
+            continue
+        out.append(s)
+    return out
 
 
 # --------------------------------------------------------------------------- risk
@@ -147,6 +218,13 @@ def needs_confirmation(name: str, args: dict, mode: str) -> str | None:
         if args.get("action") in ("fill",) and args.get("submit"):
             return "Submits a form on a web page" if mode == "always" else None
         return None if args.get("action") in _READ_ONLY_BROWSER or mode != "always" else "Interacts with a web page"
+    if name == "remote_pc":
+        inner = needs_confirmation(args.get("tool", ""), args.get("args") or {}, mode)
+        if inner:
+            return f"On {args.get('pc')}: {inner[0].lower()}{inner[1:]}"
+        return f"Controls {args.get('pc')}" if mode == "always" else None
+    if name == "schedule" and args.get("kind") == "task":
+        return "Schedules a task I'll carry out automatically" if mode == "always" else None
     if mode == "always" and name in ("mouse", "keyboard", "open", "clipboard"):
         return "Controls your mouse/keyboard/apps"
     return None
@@ -167,6 +245,12 @@ def describe(name: str, args: dict) -> str:
         return f"{args.get('action')} ({args.get('x')}, {args.get('y')})"
     if name == "open":
         return args.get("target", "")
+    if name == "remote_pc":
+        return f"{args.get('pc')}: {args.get('tool')} " + describe(args.get("tool", ""), args.get("args") or {})
+    if name == "plan":
+        return args.get("title") or f"step {args.get('step')} {args.get('status', '')}".strip()
+    if name in ("schedule", "background_task"):
+        return args.get("title") or args.get("goal") or args.get("message") or args.get("action", "")
     return ", ".join(f"{k}={v}" for k, v in args.items())[:200]
 
 
@@ -177,21 +261,57 @@ class ToolRuntime:
         self.memory = None          # GraphMemory, set by the session
         self.on_memory = None       # callback(event dict) for UI updates
         self._scale = 1.0          # screenshot px -> screen px
+        self._offset = (0, 0)      # top-left of the monitor in the latest screenshot
+        self._mon = 1              # monitor index of the latest screenshot
+        self.vision = False        # set by the session: attach after-action screenshots?
+        self.extra: dict = {}      # name -> callable(args) -> ToolOutput (session-level tools)
+        self.profile_dir = config.BROWSER_PROFILE
         self._pw = None
         self._ctx = None
         self._page = None
 
     # dispatcher -------------------------------------------------------------
     def call(self, name: str, args: dict) -> ToolOutput:
+        args = args or {}
+        if name in self.extra:
+            try:
+                return self.extra[name](args)
+            except Exception as e:  # noqa: BLE001
+                return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
         fn = getattr(self, f"t_{name}", None)
         if fn is None:
             return ToolOutput(f"Unknown tool {name}", is_error=True)
         try:
-            return fn(**(args or {}))
+            out = fn(**args)
         except TypeError as e:
             return ToolOutput(f"Bad arguments for {name}: {e}", is_error=True)
         except Exception as e:  # noqa: BLE001 - report every failure to the model
             return ToolOutput(f"{type(e).__name__}: {e}", is_error=True)
+        if self._should_verify(name, args, out):
+            self._verify(out)
+        return out
+
+    # self-check -------------------------------------------------------------
+    def _should_verify(self, name: str, args: dict, out: ToolOutput) -> bool:
+        if out.is_error or not self.settings.get("agent", {}).get("self_check", True):
+            return False
+        if name == "mouse":
+            return args.get("action") != "move"
+        return name in ("keyboard", "open")
+
+    def _verify(self, out: ToolOutput):
+        """After acting on the GUI, look again so the model can confirm it actually worked."""
+        time.sleep(0.6)
+        title = active_window_title()
+        note = f"\n[self-check] Active window now: {title or '(unknown)'}."
+        if self.vision:
+            try:
+                shot = self.t_screenshot(self._mon)
+                out.image_b64 = shot.image_b64
+                note += " After-action screenshot attached: check it worked before moving on; if not, try another way."
+            except Exception as e:  # noqa: BLE001
+                note += f" (screenshot failed: {e})"
+        out.text += note
 
     # shell ------------------------------------------------------------------
     def t_run_shell(self, command: str, elevated: bool = False, timeout: int = 120, cwd: str | None = None):
@@ -238,27 +358,41 @@ class ToolRuntime:
         return ToolOutput(text.strip(), is_error=code != 0)
 
     # screen -----------------------------------------------------------------
-    def t_screenshot(self):
+    @staticmethod
+    def monitors() -> list[dict]:
+        import mss
+        with mss.mss() as sct:
+            return [dict(m) for m in sct.monitors]
+
+    def t_screenshot(self, monitor: int | None = None):
         import mss
         from PIL import Image
         with mss.mss() as sct:
-            mon = sct.monitors[1]
+            mons = sct.monitors                      # [0] = all screens, [1] = primary, [2..] = others
+            idx = self._mon if monitor is None else int(monitor)
+            idx = max(0, min(idx, len(mons) - 1))
+            mon = mons[idx]
             raw = sct.grab(mon)
             img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-        import pyautogui
-        sw, sh = pyautogui.size()           # logical size (handles HiDPI)
-        img = img.resize((sw, sh)) if img.size != (sw, sh) else img
-        self._scale = 1.0
+            listing = "; ".join(f"{i}: {m['width']}x{m['height']} at ({m['left']},{m['top']})" + (" primary" if i == 1 else "")
+                                for i, m in enumerate(mons) if i > 0)
+        lw, lh = mon["width"], mon["height"]           # logical size (handles HiDPI / Retina)
+        if img.size != (lw, lh):
+            img = img.resize((lw, lh))
+        self._mon, self._offset, self._scale = idx, (mon["left"], mon["top"]), 1.0
         if img.width > SHOT_MAX_W:
             self._scale = img.width / SHOT_MAX_W
             img = img.resize((SHOT_MAX_W, round(img.height / self._scale)))
         buf = io.BytesIO()
         img.save(buf, "PNG", optimize=True)
-        return ToolOutput(f"Screenshot {img.width}x{img.height} (screen {sw}x{sh}).",
+        which = "all screens" if idx == 0 else f"monitor {idx}"
+        return ToolOutput(f"Screenshot of {which}: {img.width}x{img.height} (screen {lw}x{lh}). Monitors: {listing}.",
                           base64.b64encode(buf.getvalue()).decode())
 
     def _xy(self, x, y):
-        return (round(x * self._scale), round(y * self._scale)) if x is not None and y is not None else (None, None)
+        if x is None or y is None:
+            return None, None
+        return self._offset[0] + round(x * self._scale), self._offset[1] + round(y * self._scale)
 
     def t_mouse(self, action: str, x=None, y=None, to_x=None, to_y=None, amount=None):
         import pyautogui
@@ -395,7 +529,15 @@ class ToolRuntime:
         ]
         if bat:
             lines.append(f"Battery: {bat.percent:.0f}% {'charging' if bat.power_plugged else 'on battery'}")
+        try:
+            mons = self.monitors()[1:]
+            lines.append("Monitors: " + "; ".join(f"{i + 1}: {m['width']}x{m['height']}" for i, m in enumerate(mons)))
+        except Exception:  # noqa: BLE001
+            pass
         return ToolOutput("\n".join(lines))
+
+    def t_weather(self, location: str = ""):
+        return ToolOutput(weather_report(location or self.settings.get("briefings", {}).get("location", "")))
 
     # browser ----------------------------------------------------------------
     def _browser(self):
@@ -406,9 +548,9 @@ class ToolRuntime:
             kw = dict(headless=headless, viewport={"width": 1280, "height": 800})
             try:   # prefer the user's installed Chrome/Edge, fall back to bundled Chromium
                 self._ctx = self._pw.chromium.launch_persistent_context(
-                    str(config.BROWSER_PROFILE), channel="msedge" if IS_WIN else "chrome", **kw)
+                    str(self.profile_dir), channel="msedge" if IS_WIN else "chrome", **kw)
             except Exception:
-                self._ctx = self._pw.chromium.launch_persistent_context(str(config.BROWSER_PROFILE), **kw)
+                self._ctx = self._pw.chromium.launch_persistent_context(str(self.profile_dir), **kw)
             self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         if self._page.is_closed():
             self._page = self._ctx.pages[-1] if self._ctx.pages else self._ctx.new_page()
@@ -497,6 +639,64 @@ class ToolRuntime:
                 self._pw.stop()
         except Exception:
             pass
+
+
+WMO = {0: "clear", 1: "mainly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "fog", 51: "light drizzle",
+       53: "drizzle", 55: "heavy drizzle", 61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain",
+       67: "freezing rain", 71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains", 80: "showers",
+       81: "showers", 82: "violent showers", 85: "snow showers", 86: "snow showers", 95: "thunderstorm",
+       96: "thunderstorm with hail", 99: "thunderstorm with hail"}
+
+
+def weather_report(location: str = "") -> str:
+    """Open-Meteo (free, no key). Location by name, else by IP."""
+    import httpx
+    with httpx.Client(timeout=15) as c:
+        if location.strip():
+            g = c.get("https://geocoding-api.open-meteo.com/v1/search",
+                      params={"name": location.split(",")[0].strip(), "count": 1}).json()
+            if not g.get("results"):
+                return f"Couldn't find a place called {location}."
+            r = g["results"][0]
+            lat, lon, place = r["latitude"], r["longitude"], f"{r['name']}, {r.get('country', '')}"
+        else:
+            ip = c.get("https://ipinfo.io/json").json()
+            lat, lon = map(float, ip["loc"].split(","))
+            place = f"{ip.get('city')}, {ip.get('country')} (approximate, from IP)"
+        w = c.get("https://api.open-meteo.com/v1/forecast", params={
+            "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": 3,
+            "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"}).json()
+    cur, d = w["current"], w["daily"]
+    lines = [f"{place}: now {cur['temperature_2m']}°C (feels {cur['apparent_temperature']}°C), "
+             f"{WMO.get(cur['weather_code'], 'code ' + str(cur['weather_code']))}, humidity {cur['relative_humidity_2m']}%, "
+             f"wind {cur['wind_speed_10m']} km/h."]
+    for i, day in enumerate(d["time"]):
+        lines.append(f"{day}: {WMO.get(d['weather_code'][i], '?')}, {d['temperature_2m_min'][i]}–{d['temperature_2m_max'][i]}°C, "
+                     f"rain chance {d['precipitation_probability_max'][i]}%")
+    return "\n".join(lines)
+
+
+def active_window_title() -> str:
+    try:
+        if IS_WIN:
+            import ctypes
+            u = ctypes.windll.user32  # type: ignore[attr-defined]
+            h = u.GetForegroundWindow()
+            n = u.GetWindowTextLengthW(h)
+            buf = ctypes.create_unicode_buffer(n + 1)
+            u.GetWindowTextW(h, buf, n + 1)
+            return buf.value
+        if IS_MAC:
+            r = subprocess.run(["osascript", "-e", 'tell application "System Events" to get name of first '
+                                'application process whose frontmost is true'], capture_output=True, text=True, timeout=3)
+            return r.stdout.strip()
+        if shutil.which("xdotool"):
+            r = subprocess.run(["xdotool", "getactivewindow", "getwindowname"], capture_output=True, text=True, timeout=3)
+            return r.stdout.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
 
 
 def shlex_quote(s: str) -> str:

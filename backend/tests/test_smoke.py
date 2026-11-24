@@ -48,7 +48,7 @@ class ServerImportTest(unittest.TestCase):
     def test_app_routes(self):
         from jarvis import server
         paths = {r.path for r in server.app.routes}
-        for p in ("/api/health", "/api/settings", "/api/graph", "/ws"):
+        for p in ("/api/health", "/api/settings", "/api/graph", "/ws", "/api/agenda", "/api/skills", "/api/mcp"):
             self.assertIn(p, paths)
 
 
