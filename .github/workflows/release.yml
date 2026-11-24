@@ -5,6 +5,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag to create for this release, e.g. v0.4.0 (empty = a test build tagged with the run number)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -73,8 +78,8 @@ jobs:
         with:
           projectPath: app
           args: --config src-tauri/tauri.release.conf.json
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v__VERSION__-{0}', github.run_number) }}
-          releaseName: Jarvis ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__ (manual build)' }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || format('v__VERSION__-{0}', github.run_number) }}
+          releaseName: Jarvis ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag || 'v__VERSION__ (manual build)' }}
           releaseBody: |
             Windows installer for Jarvis, the voice companion that can use your computer.
 

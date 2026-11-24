@@ -24,7 +24,14 @@ files, mouse and keyboard, apps, and a real web browser.
 │            Fish Audio, OpenAI                            │
 │ audio.py   mic capture, energy VAD, barge-in, playback   │
 │ memory.py  long-term knowledge graph (LadybugDB/Kùzu)    │
-│ models.py  in-app download of Whisper/Piper/Kokoro       │
+│ models.py  in-app download of Whisper/Piper/Kokoro/wake  │
+│ wakeword.py   "Hey Jarvis" (openWakeWord ONNX)           │
+│ scheduler.py  reminders, routines, briefings             │
+│ mcp_client.py apps via MCP (stdio + streamable HTTP)     │
+│ skills.py     learned workflows + teach mode             │
+│ emotion.py    tone from your voice -> how Jarvis speaks  │
+│ awareness.py  screen glances -> proactive offers         │
+│ nodes.py      control your other PCs                     │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -100,6 +107,54 @@ In hands-free mode Jarvis keeps listening while it talks:
 Tune it in ⚙ → Memory → Interruptions. With loud speakers and no headphones, raise **Echo guard** if Jarvis
 interrupts itself.
 
+## Always ready: "Hey Jarvis"
+
+The default listening mode is the wake word. Jarvis runs the open-source
+[openWakeWord](https://github.com/dscripka/openWakeWord) "hey jarvis" model locally on ONNX Runtime
+(about 2% of one CPU core, ~4 MB downloaded on first use). Say "Hey Jarvis", hear a soft chime, then talk.
+After it answers it keeps listening for about 10 seconds, so follow-ups don't need the wake word. Saying
+"Hey Jarvis" while it's talking interrupts it. Switch modes in the Voice tile: **Off** (push to talk),
+**Wake word**, or **Always** (always listening). Tune sensitivity in ⚙ → Proactive.
+
+## Proactive
+
+- **Reminders and routines.** "Remind me at 6 to call Mum", "every Monday at 9, clean my Downloads",
+  "every weekday at 8:30 check the server". Reminders are spoken; tasks run through the agent (with your usual
+  confirmation rules). Jobs live in `~/.jarvis/schedule.json` and show in the Agenda tile.
+- **Morning and evening briefings.** Turn them on in ⚙ → Proactive: weather (Open-Meteo, no key), your calendar
+  and email when an app is connected, today's reminders and what Jarvis remembers.
+- **Screen awareness** (off by default). Every minute or so while idle, Jarvis glances at the active window
+  (and a small screenshot if the model can see images) and, only when there's a clear problem like an error
+  dialog or a failed build, offers to help. Offers are rate-limited and never repeated. Nothing is stored.
+
+## A smarter agent
+
+- **Plans with checkpoints.** Multi-step jobs start with a visible plan in the Agenda tile; each step is ticked off
+  as it completes and saved, so an interrupted job can be resumed later.
+- **Self-check.** After every click, keystroke or app launch Jarvis gets the active window title and (for vision
+  models) a fresh screenshot, and confirms the action worked before moving on.
+- **Skills it learns.** Jarvis saves reusable workflows to `~/.jarvis/skills/*.md` after multi-step jobs, when you
+  say "remember how to do this", or in **teach mode**: press the eye button (or say "watch me"), do the task, say
+  "I'm done". It records window changes, clicks, typing (masked in password/sign-in windows), screenshots and your
+  narration, then writes the steps. Skills are versioned and improved whenever Jarvis learns something new.
+- **Apps via MCP.** ⚙ → Connections takes any [Model Context Protocol](https://modelcontextprotocol.io) server:
+  local ones started with a command (`npx`, `uvx`…) or remote ones by URL with a token header. Templates are
+  included for Gmail + Calendar (workspace-mcp), GitHub, Notion, Spotify and your files. Read-only tools run freely;
+  tools that change things ask first (unless you mark a server `"trusted": true`). OAuth-only remote servers aren't
+  supported yet; use a token or a local server.
+- **Background agents.** "Research the best NAS under 30k in the background" starts a separate agent with its own
+  conversation. It uses the shell, files, browser (its own profile) and apps, but never your mouse or keyboard, so
+  you can keep working and chatting. You hear about it when it finishes; cancel it from the Agenda tile.
+- **Emotion-aware voice.** Jarvis compares each utterance's loudness, pitch, pitch variation and speaking rate with
+  your own running baseline, plus word choice, and estimates a mood (stressed, excited, down, tired). The agent gets
+  a short `<tone>` hint and the voice adapts: calmer and slower when you're stressed, brighter when you're excited.
+  ElevenLabs and OpenAI `gpt-4o-mini-tts` also get matching style settings.
+- **Multi-monitor.** Screenshots can target any monitor (or all at once); clicks map to the right screen.
+- **Multi-PC.** Install Jarvis on another PC and tick ⚙ → Connections → "Let my other PCs control this one". It shows
+  an address and token. Add them on your main PC under "Other PCs I control" and ask "on the laptop, open Spotify".
+  Each request needs the token; admin commands from other PCs are refused unless you allow them. Use it on your
+  home network or a private network like Tailscale, not the open internet.
+
 ## Long-term memory (knowledge graph)
 
 Jarvis builds a personal knowledge graph in an embedded graph database
@@ -132,7 +187,7 @@ Jarvis has the same power over your machine as your user account, and more when 
 
 ## Data
 
-Everything lives in `~/.jarvis/`: `settings.json` (including API keys, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech models) and `browser-profile/` (the automation browser's logins).
+Everything lives in `~/.jarvis/`: `settings.json` (including API keys and app tokens, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech and wake word models), `skills/`, `schedule.json`, `plans.json`, `voice_profile.json` (your voice baseline for tone detection), `logs/` (MCP server output) and `browser-profile/` (the automation browser's logins).
 Environment variables like `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ELEVENLABS_API_KEY` and `FISH_AUDIO_API_KEY` also work.
 
 ## Download (Windows)
@@ -163,6 +218,5 @@ cd ..\app; npx tauri build --config src-tauri/tauri.release.conf.json
 
 - Replies aren't streamed token by token yet; speech starts once the model's turn finishes (sentences are then synthesized and played in a pipeline).
 - Memory recall is lexical plus graph expansion. Adding embeddings would also match paraphrases ("my sibling" for "sister").
-- No wake word yet ("Hey Jarvis"); openWakeWord would slot into `audio.py`.
 - One screen is captured (the primary monitor).
 - Switching LLM provider starts a fresh conversation.

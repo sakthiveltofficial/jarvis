@@ -6,7 +6,7 @@ const $ = (id) => document.getElementById(id);
 let ws = null;
 let state = "idle";
 let level = 0, targetLevel = 0;
-let handsfree = false;
+let handsfree = false, voiceMode = "off", wakeReady = false, teaching = false;
 let settings = null, presets = {};
 const toolEls = {};
 
@@ -36,13 +36,23 @@ function onEvent(ev) {
   switch (ev.type) {
     case "state": state = ev.state; setStatus(); break;
     case "level": targetLevel = ev.value; break;
-    case "handsfree": handsfree = ev.on; renderHandsfree(); break;
+    case "handsfree": handsfree = ev.on; break;
+    case "voice_mode": voiceMode = ev.mode; wakeReady = ev.wake_ready; renderHandsfree(); break;
+    case "wake": $("t-voice-tile").classList.add("awake"); $("voice-mode").textContent = "I'm listening…"; break;
+    case "wake_sleep": $("t-voice-tile").classList.remove("awake"); renderHandsfree(); break;
+    case "mood": renderMood(ev); break;
+    case "plan": if (ev.agent === "main") { agenda.plan = ev.plan; renderAgenda(); } break;
+    case "bg": upsertBg(ev); break;
+    case "bg_update": bgNote(ev); break;
+    case "agenda": loadAgenda(); break;
+    case "teach": teaching = ev.on; renderTeach(); break;
+    case "skills": if (!$("tab-skills").classList.contains("hidden")) loadSkills(); break;
     case "user": addMsg("user", ev.text); break;
-    case "assistant": addMsg("assistant", ev.text); break;
+    case "assistant": addMsg("assistant", ev.text, ev.proactive); break;
     case "info": addMsg("info", ev.text); break;
     case "error": addMsg("error", ev.text); break;
-    case "tool_start": addTool(ev); break;
-    case "tool_end": endTool(ev); break;
+    case "tool_start": if (!ev.agent) addTool(ev); break;
+    case "tool_end": if (!ev.agent) endTool(ev); break;
     case "confirm": showConfirm(ev); break;
     case "barge": onBarge(ev); break;
     case "memory_search": onMemorySearch(ev); break;
@@ -64,9 +74,10 @@ function setStatus() {
   $("state-dot").classList.toggle("busy", state !== "idle");
 }
 
-function addMsg(kind, text) {
+function addMsg(kind, text, proactive) {
   const d = document.createElement("div");
-  d.className = "msg " + kind;
+  d.className = "msg " + kind + (proactive ? " proactive" : "");
+  if (proactive) d.title = { reminder: "Reminder", offer: "I noticed something on your screen", background: "Background task", teach: "Teach mode", skill: "New skill" }[proactive] || proactive;
   d.textContent = text;
   if (kind === "user" || kind === "assistant") $("convo-count").textContent = `${++msgCount} messages`;
   $("transcript").appendChild(d);
@@ -88,7 +99,7 @@ function endTool(ev) {
   const d = toolEls[ev.id];
   if (!d) return;
   d.className = "tool " + (ev.ok ? "ok" : "err");
-  $("stat-actions").textContent = ++actionCount;
+  ++actionCount;
   const body = d.querySelector(".body");
   const pre = document.createElement("pre");
   pre.textContent = ev.text;
@@ -137,12 +148,107 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keyup", (e) => { if (e.code === "Space") pttStop(); });
 
-$("btn-handsfree").onclick = () => send({ type: "handsfree", on: !handsfree });
+const MODES = ["off", "wake", "handsfree"];
+const setMode = (m) => send({ type: "voice_mode", mode: m });
+$("btn-handsfree").onclick = () => setMode(MODES[(MODES.indexOf(voiceMode) + 1) % 3]);
+document.querySelectorAll("#voice-seg button").forEach((b) => b.onclick = () => setMode(b.dataset.mode));
 function renderHandsfree() {
-  $("btn-handsfree").classList.toggle("on", handsfree);
-  $("btn-handsfree").title = "Hands-free: " + (handsfree ? "on (click to turn off)" : "off (click to just talk)");
-  $("hf-label").textContent = "hands-free " + (handsfree ? "on" : "off");
-  $("voice-mode").textContent = handsfree ? "hands-free" : "push to talk";
+  const name = settings?.assistant_name || "Jarvis";
+  const label = { off: "push to talk", wake: wakeReady ? `say “Hey ${name}”` : `say “${name}…”`, handsfree: "always listening" }[voiceMode];
+  $("btn-handsfree").classList.toggle("on", voiceMode !== "off");
+  $("btn-handsfree").title = `Listening: ${label} (click to change)`;
+  $("hf-label").textContent = label;
+  $("voice-mode").textContent = label;
+  $("t-voice-tile").classList.remove("awake");
+  document.querySelectorAll("#voice-seg button").forEach((b) => b.classList.toggle("on", b.dataset.mode === voiceMode));
+}
+function renderMood(m) {
+  const chip = $("mood-chip");
+  if (!m.mood || m.mood === "neutral") { chip.classList.add("hidden"); return; }
+  chip.textContent = { stressed: "you sound stressed", excited: "you sound excited", down: "you sound a bit down", tired: "you sound tired" }[m.mood] || m.mood;
+  chip.title = (m.cues || []).join("; ");
+  chip.classList.remove("hidden");
+  clearTimeout(renderMood.t); renderMood.t = setTimeout(() => chip.classList.add("hidden"), 300000);
+}
+
+// teach mode
+async function toggleTeach() {
+  await fetch(API + "/api/teach", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: teaching ? "stop" : "start" }) });
+}
+$("btn-teach").onclick = toggleTeach;
+$("btn-teach2").onclick = toggleTeach;
+function renderTeach() {
+  $("btn-teach").classList.toggle("rec", teaching);
+  $("btn-teach").title = teaching ? "Watching… click when you're done" : "Teach me a workflow (I'll watch)";
+  $("btn-teach2").textContent = teaching ? "I'm done, save the skill" : "Teach me something";
+}
+
+// ------------------------------------------------------------------ agenda (plan, background tasks, schedule)
+let agenda = { plan: null, background: [], schedules: [] };
+async function loadAgenda() {
+  try { agenda = await (await fetch(API + "/api/agenda")).json(); } catch (_) { return; }
+  voiceMode = agenda.voice_mode; wakeReady = agenda.wake_ready; teaching = agenda.teach;
+  renderHandsfree(); renderTeach(); renderAgenda();
+  if (agenda.mood) renderMood(agenda.mood);
+}
+function upsertBg(ev) {
+  const i = agenda.background.findIndex((b) => b.id === ev.id);
+  if (i >= 0) agenda.background[i] = ev; else agenda.background.push(ev);
+  renderAgenda();
+}
+function bgNote(ev) {
+  const b = agenda.background.find((x) => x.id === ev.id);
+  const d = document.createElement("div");
+  d.className = "msg bg";
+  d.textContent = `⟳ ${b ? b.goal.slice(0, 40) : "background"}: ${ev.text}`;
+  $("transcript").appendChild(d);
+  d.scrollIntoView({ block: "end" });
+}
+function el(tag, cls, text) { const d = document.createElement(tag); if (cls) d.className = cls; if (text !== undefined) d.textContent = text; return d; }
+function when(iso) {
+  if (!iso) return "";
+  const d = new Date(iso), now = new Date();
+  const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const days = Math.round((new Date(d.toDateString()) - new Date(now.toDateString())) / 864e5);
+  return days === 0 ? t : days === 1 ? "tomorrow " + t : d.toLocaleDateString([], { weekday: "short" }) + " " + t;
+}
+function renderAgenda() {
+  const now = $("ag-now"), next = $("ag-next");
+  now.replaceChildren(); next.replaceChildren();
+  const p = agenda.plan;
+  const running = agenda.background.filter((b) => b.status === "running");
+  if (p && p.steps && !p.complete) {
+    const done = p.steps.filter((x) => x.status === "done" || x.status === "skipped").length;
+    now.appendChild(el("div", "ag-title", p.title));
+    const bar = el("div", "ag-bar"); const i = el("i"); i.style.width = `${(100 * done) / p.steps.length}%`; bar.appendChild(i); now.appendChild(bar);
+    const marks = { done: "✓", in_progress: "→", failed: "✕", skipped: "–", pending: "·" };
+    p.steps.forEach((st, k) => {
+      const r = el("div", "ag-step " + st.status);
+      r.append(el("span", "m", marks[st.status] || "·"), el("span", "", `${st.text}${st.note ? " — " + st.note : ""}`));
+      now.appendChild(r);
+    });
+  }
+  for (const b of agenda.background.slice().reverse().slice(0, 4)) {
+    const r = el("div", "ag-item " + b.status);
+    r.append(el("span", "t", b.goal), el("span", "w", b.status === "running" ? `${b.steps} actions` : b.status));
+    r.title = b.result || b.goal;
+    if (b.status === "running") {
+      const x = el("button", "", "✕"); x.title = "Cancel";
+      x.onclick = () => fetch(API + `/api/background/${b.id}/cancel`, { method: "POST" });
+      r.appendChild(x);
+    }
+    now.appendChild(r);
+  }
+  if (!now.children.length) now.appendChild(el("div", "ag-empty", "Nothing in progress. Big jobs show their plan here."));
+  const up = agenda.schedules.filter((j) => j.enabled !== false).slice(0, 6);
+  for (const j of up) {
+    const r = el("div", "ag-item");
+    r.append(el("span", "t", (j.kind === "reminder" ? "⏰ " : j.kind === "briefing" ? "☀ " : "▶ ") + j.title), el("span", "w", when(j.next_run)));
+    r.title = `${j.kind}: ${j.message} (${j.when})`;
+    next.appendChild(r);
+  }
+  if (!up.length) next.appendChild(el("div", "ag-empty", "Nothing scheduled. Try “remind me at 6 to call Mum”."));
+  $("agenda-sub").textContent = running.length ? `${running.length} running in background` : "";
 }
 $("btn-stop").onclick = () => send({ type: "stop" });
 $("btn-new").onclick = async () => {
@@ -260,7 +366,7 @@ function wire(id, kind) {
   else for (let i = 0; i < 10; i++) out += `<ellipse cx="50" cy="${25 + i * 6}" rx="${40 - i * 4}" ry="${5 - i * .35}"/>`;
   g.innerHTML = out;
 }
-wire("wire-a", "onion"); wire("wire-b", "cone");
+wire("wire-a", "onion");
 
 // greeting + labels
 function greet() {
@@ -299,6 +405,9 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("hidden", x.id !== "tab-" + b.dataset.tab));
   if (b.dataset.tab === "models") refreshModels();
+  if (b.dataset.tab === "skills") loadSkills();
+  if (b.dataset.tab === "connections") loadConnections();
+  if (b.dataset.tab === "proactive") renderSchedules();
 });
 
 function opt(sel, items, value) {
@@ -353,6 +462,22 @@ async function openSettings() {
   $("barge-on").checked = s.audio.barge_in !== false;
   $("barge-echo").value = s.audio.echo_gain ?? 0.6;
   $("barge-ms").value = s.audio.barge_check_ms ?? 900;
+  const v = s.voice || {}, br = s.briefings || {}, aw = s.awareness || {}, nd = s.node || {};
+  $("pv-mode").value = v.mode || "wake"; $("pv-thr").value = v.wake_threshold ?? 0.5;
+  $("pv-follow").value = v.follow_up_s ?? 10; $("pv-listen").value = v.listen_s ?? 8;
+  $("pv-chime").checked = v.chime !== false; $("pv-emotion").checked = v.emotion !== false;
+  $("pv-selfcheck").checked = s.agent.self_check !== false;
+  $("br-loc").value = br.location || "";
+  for (const [k, id] of [["morning", "m"], ["evening", "e"]]) {
+    const b = br[k] || {};
+    $(`br-${id}-on`).checked = !!b.enabled; $(`br-${id}-time`).value = b.time || (k === "morning" ? "08:00" : "18:30");
+    $(`br-${id}-wd`).checked = !!b.weekdays_only;
+  }
+  $("aw-on").checked = !!aw.enabled; $("aw-int").value = aw.interval_s ?? 60; $("aw-cool").value = aw.cooldown_min ?? 10; $("aw-model").value = aw.model || "";
+  $("mcp-json").value = JSON.stringify((s.mcp && s.mcp.servers) || [], null, 2);
+  $("node-on").checked = !!nd.enabled; $("node-name").value = nd.name || ""; $("node-port").value = nd.port || 8766; $("node-elev").checked = !!nd.allow_elevated;
+  pcs = (s.nodes || []).map((x) => ({ ...x })); renderPcs();
+  renderSchedules();
   try {
     const g = await (await fetch(API + "/api/graph?include_invalid=true")).json();
     const valid = g.edges.filter((e) => e.valid).length;
@@ -386,13 +511,132 @@ function collect() {
              barge_in: $("barge-on").checked, echo_gain: Number($("barge-echo").value || 0.6), barge_check_ms: Number($("barge-ms").value || 900) },
     memory: { auto_save: $("mem-auto").checked },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
-             speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked },
+             speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
+    voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), follow_up_s: Number($("pv-follow").value || 10),
+             listen_s: Number($("pv-listen").value || 8), chime: $("pv-chime").checked, emotion: $("pv-emotion").checked },
+    briefings: {
+      location: $("br-loc").value.trim(),
+      morning: { enabled: $("br-m-on").checked, time: $("br-m-time").value || "08:00", weekdays_only: $("br-m-wd").checked },
+      evening: { enabled: $("br-e-on").checked, time: $("br-e-time").value || "18:30", weekdays_only: $("br-e-wd").checked },
+    },
+    awareness: { enabled: $("aw-on").checked, interval_s: Number($("aw-int").value || 60), cooldown_min: Number($("aw-cool").value || 10), model: $("aw-model").value.trim() },
+    mcp: { servers: parseMcp() },
+    node: { enabled: $("node-on").checked, name: $("node-name").value.trim(), port: Number($("node-port").value || 8766), allow_elevated: $("node-elev").checked },
+    nodes: pcs.filter((p) => p.name && p.url),
   };
 }
 
+// ------------------------------------------------------------------ connections: MCP apps + other PCs
+const MCP_TEMPLATES = {
+  "Gmail + Calendar": { name: "google", command: "uvx", args: ["workspace-mcp", "--tools", "gmail", "calendar"],
+    env: { GOOGLE_OAUTH_CLIENT_ID: "<client id>", GOOGLE_OAUTH_CLIENT_SECRET: "<client secret>" } },
+  "GitHub": { name: "github", url: "https://api.githubcopilot.com/mcp/", headers: { Authorization: "Bearer <github token>" } },
+  "Notion": { name: "notion", command: "npx", args: ["-y", "@notionhq/notion-mcp-server"], env: { NOTION_TOKEN: "<ntn_… integration token>" } },
+  "Spotify": { name: "spotify", command: "uvx", args: ["spotify-mcp"],
+    env: { SPOTIFY_CLIENT_ID: "<id>", SPOTIFY_CLIENT_SECRET: "<secret>", SPOTIFY_REDIRECT_URI: "http://127.0.0.1:8888/callback" } },
+  "Files": { name: "files", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "<C:/Users/you/Documents>"] },
+};
+for (const [label, tpl] of Object.entries(MCP_TEMPLATES)) {
+  const b = el("button", "pill", "+ " + label); b.type = "button";
+  b.onclick = () => {
+    const list = parseMcp(true) || [];
+    if (!list.some((x) => x.name === tpl.name)) list.push({ ...tpl, enabled: true });
+    $("mcp-json").value = JSON.stringify(list, null, 2);
+  };
+  $("mcp-templates").appendChild(b);
+}
+function parseMcp(quiet) {
+  try {
+    const v = JSON.parse($("mcp-json").value || "[]");
+    $("mcp-json-err").textContent = "";
+    return Array.isArray(v) ? v : [v];
+  } catch (e) {
+    if (!quiet) $("mcp-json-err").textContent = "Servers JSON isn't valid: " + e.message;
+    return quiet ? null : (settings?.mcp?.servers || []);
+  }
+}
+async function loadConnections() {
+  try {
+    const m = await (await fetch(API + "/api/mcp")).json();
+    $("mcp-status").replaceChildren(...m.servers.map((s) => {
+      const r = el("div", "mrow");
+      r.append(el("span", "name", s.name), el("span", "state " + s.state, s.state === "ready" ? `connected · ${s.tools.length} tools` : s.state));
+      if (s.error) r.title = s.error;
+      return r;
+    }));
+    if (!m.servers.length) $("mcp-status").replaceChildren(el("div", "ag-empty hint", "No apps connected yet."));
+    const n = await (await fetch(API + "/api/node")).json();
+    const box = $("node-info"); box.replaceChildren();
+    if (n.enabled) {
+      box.append(`${n.running ? "Listening" : "Not running"} as “${n.name}” on `, el("b", "", n.addresses.map((a) => `${a}:${n.port}`).join(", ") || `port ${n.port}`), ". Token: ", el("span", "node-token", n.token));
+    } else box.textContent = "Off. Tick the box and Save to let your other PCs control this one.";
+  } catch (_) {}
+}
+let pcs = [];
+function renderPcs(status = {}) {
+  $("pc-rows").replaceChildren(...pcs.map((p, i) => {
+    const r = el("div", "mrow");
+    for (const [k, ph] of [["name", "Name (e.g. Laptop)"], ["url", "Address, e.g. 192.168.1.20:8766"], ["token", "Token"]]) {
+      const inp = el("input"); inp.placeholder = ph; inp.value = p[k] || ""; if (k === "token") inp.type = "password";
+      inp.oninput = () => (p[k] = inp.value); r.appendChild(inp);
+    }
+    const st = status[p.name];
+    if (st) r.appendChild(el("span", "state " + (st.ok ? "ready" : "error"), st.ok ? "online" : "offline"));
+    if (st && !st.ok) r.title = st.error;
+    const x = el("button", "pill", "✕"); x.onclick = () => { pcs.splice(i, 1); renderPcs(); }; r.appendChild(x);
+    return r;
+  }));
+}
+$("pc-add").onclick = () => { pcs.push({ name: "", url: "", token: "" }); renderPcs(); };
+$("pc-check").onclick = async () => {
+  $("btn-save").click();
+  await new Promise((r) => setTimeout(r, 600));
+  const r = await (await fetch(API + "/api/nodes/status")).json();
+  renderPcs(Object.fromEntries(r.pcs.map((x) => [x.name, x])));
+};
+
+// ------------------------------------------------------------------ schedules + skills (settings tabs)
+async function renderSchedules() {
+  await loadAgenda();
+  const rows = agenda.schedules.map((j) => {
+    const r = el("div", "mrow");
+    const n = el("span", "name"); n.append(el("b", "", j.title), el("span", "desc", `${j.kind} · ${j.when} · next ${when(j.next_run)}`));
+    const x = el("button", "pill", j.builtin ? "turn off below" : "Cancel"); x.disabled = !!j.builtin;
+    x.onclick = async () => { await fetch(API + "/api/schedules/" + j.id, { method: "DELETE" }); renderSchedules(); };
+    r.append(n, x);
+    return r;
+  });
+  $("sched-list").replaceChildren(...(rows.length ? rows : [el("div", "hint", "Nothing scheduled.")]));
+}
+async function loadSkills() {
+  const r = await (await fetch(API + "/api/skills")).json();
+  const rows = r.skills.map((sk) => {
+    const row = el("div", "mrow");
+    const n = el("span", "name"); n.append(el("b", "", sk.name), el("span", "desc", `${sk.description} · v${sk.version} · used ${sk.uses}×${sk.source === "teach" ? " · taught" : ""}`));
+    const view = el("button", "pill", "View");
+    view.onclick = async () => {
+      const d = await (await fetch(API + "/api/skills/" + sk.id)).json();
+      $("skill-view").textContent = d.body; $("skill-view").classList.remove("hidden");
+    };
+    const del = el("button", "pill danger", "Delete");
+    del.onclick = async () => {
+      if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "Sure?"; return; }
+      await fetch(API + "/api/skills/" + sk.id, { method: "DELETE" }); loadSkills();
+    };
+    row.append(n, view, del);
+    return row;
+  });
+  $("skill-list").replaceChildren(...(rows.length ? rows : [el("div", "hint", "No skills yet.")]));
+}
+
 $("btn-save").onclick = async () => {
-  await fetch(API + "/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collect()) });
+  const body = collect();
+  if ($("mcp-json-err").textContent) { $("save-msg").textContent = ""; return; }
+  await fetch(API + "/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   await loadSettings();
+  if (body.voice.mode !== voiceMode) setMode(body.voice.mode);
+  loadAgenda();
+  if (!$("tab-connections").classList.contains("hidden")) setTimeout(loadConnections, 1500);
   $("save-msg").textContent = "Saved ✓";
   setTimeout(() => ($("save-msg").textContent = ""), 2500);
 };
@@ -448,7 +692,6 @@ async function loadGraph() {
     const g = await (await fetch(API + "/api/graph" + ($("graph-history").checked ? "?include_invalid=true" : ""))).json();
     graph.setData(g);
     $("mem-count").textContent = g.nodes.length;
-    $("stat-facts").textContent = g.edges.filter((e) => e.valid !== false).length;
     if (!graphLoaded) { graphLoaded = true; setTimeout(() => graph.fit(), 1500); }
   } catch (_) { $("mem-count").textContent = "—"; }
 }
@@ -562,5 +805,8 @@ $("mem-clear").onclick = async () => {
   await loadSettings();
   connect();
   loadGraph();
-  addMsg("info", "Hold Space (or the mic) to talk, or turn on hands-free. Open ⚙ to pick your model and voices.");
+  loadAgenda();
+  setInterval(renderAgenda, 60000);
+  const name = settings.assistant_name || "Jarvis";
+  addMsg("info", `Say “Hey ${name}”, hold Space (or the mic) to talk, or type. Open ⚙ to pick your model, voices and apps.`);
 })();

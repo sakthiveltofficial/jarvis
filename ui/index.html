@@ -19,6 +19,9 @@
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
       <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></symbol>
       <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M17 7L7 17M16 17H7V8"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-ear" viewBox="0 0 24 24"><path d="M6 9a6 6 0 1 1 12 0c0 3-2 4-3 5.5S14 18 12 19.5 8 20 8 17"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-1.5 2-1.5 3"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
     </defs>
   </svg>
 
@@ -41,14 +44,15 @@
       <div class="status-line"><span class="pulse" id="state-dot"></span><span id="status-text">Starting up…</span></div>
 
       <nav class="rail">
-        <button class="icon-btn" id="btn-handsfree" title="Hands-free: just talk"><svg><use href="#i-wave"/></svg></button>
+        <button class="icon-btn" id="btn-handsfree" title="Listening mode"><svg><use href="#i-ear"/></svg></button>
+        <button class="icon-btn" id="btn-teach" title="Teach me a workflow (I'll watch)"><svg><use href="#i-eye"/></svg></button>
         <button class="icon-btn" id="view-graph" title="Expand memory graph"><svg><use href="#i-graph"/></svg></button>
         <button class="icon-btn" id="btn-stop" title="Stop (Esc)"><svg><use href="#i-stop"/></svg></button>
       </nav>
 
       <div class="presence" id="stage">
         <canvas id="orb" width="640" height="640"></canvas>
-        <div class="callout c1"><span class="cdot"></span><b id="state-label">idle</b><small id="hf-label">hands-free off</small></div>
+        <div class="callout c1"><span class="cdot"></span><b id="state-label">idle</b><small id="hf-label">voice off</small></div>
         <div class="callout c2"><span class="cdot"></span><b id="model-label">—</b><small>brain</small></div>
         <div class="callout c3"><span class="cdot"></span><b id="recall-label">0</b><small>memories recalled</small></div>
       </div>
@@ -68,9 +72,15 @@
         <div class="transcript" id="transcript"></div>
       </article>
 
-      <article class="tile t-voice">
-        <div class="tile-head"><span>Voice</span><span class="muted" id="voice-mode">push to talk</span></div>
+      <article class="tile t-voice" id="t-voice-tile">
+        <div class="tile-head"><span>Voice</span>
+          <div class="seg" id="voice-seg">
+            <button data-mode="off" title="Push to talk only">Off</button>
+            <button data-mode="wake" title="Say “Hey Jarvis”">Wake word</button>
+            <button data-mode="handsfree" title="Always listening">Always</button>
+          </div></div>
         <div class="big" id="voice-state">Idle</div>
+        <div class="voice-sub"><span id="voice-mode">push to talk</span><span class="mood hidden" id="mood-chip"></span></div>
         <canvas id="wave"></canvas>
         <div class="tile-foot"><span id="stt-label">Whisper</span><span id="tts-label">Piper</span></div>
       </article>
@@ -91,15 +101,13 @@
         <aside id="node-panel" class="node-panel hidden"></aside>
       </article>
 
-      <article class="tile t-stat s1">
-        <div class="tile-head"><span>Facts</span><svg class="ico"><use href="#i-arrow"/></svg></div>
-        <div class="big" id="stat-facts">0</div><small class="muted">remembered</small>
+      <article class="tile t-agenda" id="agenda-tile">
+        <div class="tile-head"><span>Agenda</span><span class="muted" id="agenda-sub"></span></div>
+        <div class="agenda">
+          <div class="ag-col"><div class="ag-h">Now</div><div id="ag-now" class="ag-list"></div></div>
+          <div class="ag-col"><div class="ag-h">Up next</div><div id="ag-next" class="ag-list"></div></div>
+        </div>
         <svg class="wire" viewBox="0 0 100 100"><g id="wire-a"></g></svg>
-      </article>
-      <article class="tile t-stat s2">
-        <div class="tile-head"><span>Actions</span></div>
-        <div class="big" id="stat-actions">0</div><small class="muted">this session</small>
-        <svg class="wire" viewBox="0 0 100 100"><g id="wire-b"></g></svg>
       </article>
       <article class="tile t-stat s3">
         <div class="tile-head"><span>Mode</span></div>
@@ -122,6 +130,9 @@
       <button data-tab="models">Local models</button>
       <button data-tab="behaviour">Behaviour</button>
       <button data-tab="memory">Memory</button>
+      <button data-tab="proactive">Proactive</button>
+      <button data-tab="skills">Skills</button>
+      <button data-tab="connections">Connections</button>
     </nav>
 
     <div class="tab" id="tab-model">
@@ -251,6 +262,79 @@
       </div>
       <h3>Danger zone</h3>
       <button class="pill danger" id="mem-clear" type="button">Forget everything</button>
+    </div>
+
+    <div class="tab hidden" id="tab-proactive">
+      <h3>Listening</h3>
+      <div class="row2">
+        <label>Voice mode
+          <select id="pv-mode"><option value="wake">Wake word (“Hey Jarvis”)</option><option value="handsfree">Always listening</option><option value="off">Push to talk only</option></select></label>
+        <label>Wake word sensitivity <small>(lower = more sensitive)</small>
+          <input id="pv-thr" type="number" step="0.05" min="0.2" max="0.95" /></label>
+      </div>
+      <div class="row2">
+        <label>Keep listening after I reply (seconds) <input id="pv-follow" type="number" min="0" max="120" /></label>
+        <label>Wait for you after the wake word (seconds) <input id="pv-listen" type="number" min="2" max="30" /></label>
+      </div>
+      <label class="check"><input type="checkbox" id="pv-chime" /> Play a soft chime when I hear the wake word</label>
+      <label class="check"><input type="checkbox" id="pv-emotion" /> Notice how you sound (stressed, excited, tired) and adapt my tone</label>
+      <label class="check"><input type="checkbox" id="pv-selfcheck" /> Double-check my clicks and typing worked (after-action screenshot)</label>
+
+      <h3>Briefings</h3>
+      <label>Your city for the weather <small>(empty = guess from your IP)</small><input id="br-loc" placeholder="Chennai" /></label>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="br-m-on" /> Morning briefing</label>
+        <label>at <input id="br-m-time" type="time" /></label>
+        <label class="check"><input type="checkbox" id="br-m-wd" /> weekdays only</label>
+      </div>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="br-e-on" /> Evening wrap-up</label>
+        <label>at <input id="br-e-time" type="time" /></label>
+        <label class="check"><input type="checkbox" id="br-e-wd" /> weekdays only</label>
+      </div>
+      <p class="hint">Briefings cover weather, your calendar and email (when connected under Connections), reminders and what I remember. Ask me “remind me at 6…” or “every Monday, clean my Downloads” to schedule things.</p>
+
+      <h3>Screen awareness</h3>
+      <label class="check"><input type="checkbox" id="aw-on" /> Glance at my screen now and then and offer help when something goes wrong</label>
+      <div class="row3">
+        <label>Every (seconds) <input id="aw-int" type="number" min="20" max="900" /></label>
+        <label>Quiet for (minutes) after an offer <input id="aw-cool" type="number" min="1" max="240" /></label>
+        <label>Model for glances <input id="aw-model" placeholder="same as Brain" /></label>
+      </div>
+      <p class="hint">Uses screenshots when the model can see images, otherwise only window titles. Nothing is stored. With Claude, a smaller model such as claude-haiku-5-5 keeps glances cheap.</p>
+
+      <h3>Scheduled</h3>
+      <div id="sched-list" class="mlist"></div>
+    </div>
+
+    <div class="tab hidden" id="tab-skills">
+      <p class="hint">Skills are workflows I've learned. I save one after a multi-step job you'll want again, when you say “remember how to do this”, or when you <b>teach</b> me: press Teach (or say “watch me”), do the task normally, then say “I'm done”. I improve a skill each time I learn something new.</p>
+      <button class="pill" id="btn-teach2" type="button">Teach me something</button>
+      <div id="skill-list" class="mlist" style="margin-top:14px"></div>
+      <pre id="skill-view" class="skill-view hidden"></pre>
+    </div>
+
+    <div class="tab hidden" id="tab-connections">
+      <h3>Apps (MCP servers)</h3>
+      <p class="hint">Plug in apps through the Model Context Protocol: email, calendar, notes, GitHub, music and more. Add a template, fill in its token or path, then Save. Secrets stay on this computer.</p>
+      <div class="tpl-row" id="mcp-templates"></div>
+      <div id="mcp-status" class="mlist"></div>
+      <label>Servers (JSON) <textarea id="mcp-json" rows="9" spellcheck="false"></textarea></label>
+      <small class="hint" id="mcp-json-err"></small>
+
+      <h3>This PC</h3>
+      <label class="check"><input type="checkbox" id="node-on" /> Let my other PCs control this one</label>
+      <div class="row3">
+        <label>Name <input id="node-name" /></label>
+        <label>Port <input id="node-port" type="number" min="1024" max="65535" /></label>
+        <label class="check"><input type="checkbox" id="node-elev" /> allow admin commands</label>
+      </div>
+      <div id="node-info" class="hint"></div>
+
+      <h3>Other PCs I control</h3>
+      <p class="hint">On the other PC, tick “Let my other PCs control this one”, then add its address and token here. Use your home network or a private one like Tailscale.</p>
+      <div id="pc-rows" class="mlist"></div>
+      <div class="row-btns"><button class="pill" id="pc-add" type="button">+ Add PC</button><button class="pill" id="pc-check" type="button">Check connections</button></div>
     </div>
 
     <div class="drawer-foot">

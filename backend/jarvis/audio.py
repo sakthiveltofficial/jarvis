@@ -35,7 +35,7 @@ class Mic:
         self.wake = None           # WakeWord detector, used in "wake" mode
         self.idle_mode = "off"     # mode to return to after push-to-talk: off | wake | handsfree
         self.in_speech = False     # hands-free: currently capturing an utterance
-        self.ignore_until = 0.0    # drop audio until then (our own chime)
+        self._ignore_blocks = 0    # drop this many blocks (our own chime right after the wake word)
         self.mode = "off"          # off | ptt | handsfree | wake
         self.speaking = False      # True while the assistant's voice is playing
         self.out_level = 0.0       # RMS of what the speaker is playing right now (echo estimate)
@@ -98,8 +98,8 @@ class Mic:
 
     def engage(self):
         """Wake word heard: listen for a request (hands-free) until the session puts us back to sleep."""
+        self._ignore_blocks = 8     # ~240 ms
         self.mode = "handsfree"
-        self.ignore_until = time.time() + 0.25
 
     # worker -------------------------------------------------------------------
     def feed(self, block: np.ndarray):
@@ -152,7 +152,8 @@ class Mic:
                 if self.mode == "wake":
                     self.in_speech = False
                     continue
-            if now < self.ignore_until:
+            if self._ignore_blocks > 0:
+                self._ignore_blocks -= 1
                 continue
             if self.mode != "handsfree":
                 in_speech, speech, loud, silent_ms, cand, checking = False, [], 0, 0, [], None

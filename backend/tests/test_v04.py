@@ -4,7 +4,6 @@ import os
 import sys
 import tempfile
 import textwrap
-import time
 import unittest
 
 os.environ.setdefault("JARVIS_HOME", tempfile.mkdtemp())
