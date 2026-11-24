@@ -7,56 +7,114 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="app">
-    <header>
-      <div class="brand"><span class="dot" id="conn-dot"></span><span id="brand-name">JARVIS</span></div>
-      <div class="status" id="status-text">Starting up…</div>
-      <div class="hdr-actions">
-        <button class="icon-btn" id="btn-new" title="New conversation">⟲</button>
-        <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
-      </div>
-    </header>
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h-2"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+      <symbol id="i-graph" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="18" r="2"/><circle cx="12" cy="10" r="1.5"/><path d="M6.7 7l4 2.4M17.2 7.7l-3.8 1.8M12 11.5V16"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17L17 7M8 7h9v9"/></symbol>
+      <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M17 7L7 17M16 17H7V8"/></symbol>
+    </defs>
+  </svg>
 
-    <main>
-      <section class="stage" id="stage">
-        <div class="view-toggle">
-          <button id="view-orb" class="active">Jarvis</button>
-          <button id="view-graph">Memory graph <span id="mem-count"></span></button>
+  <div id="app">
+    <!-- ============ left: presence ============ -->
+    <section class="left">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo"><span class="dot" id="conn-dot"></span></span>
+          <span id="brand-name">Jarvis</span>
         </div>
-        <canvas id="orb" width="520" height="520"></canvas>
-        <div class="state-label" id="state-label">idle</div>
-        <canvas id="graph" class="hidden"></canvas>
+        <div class="hdr-actions">
+          <button class="icon-btn" id="btn-new" title="New conversation"><svg><use href="#i-plus"/></svg></button>
+          <button class="icon-btn" id="btn-theme" title="Light / dark"><svg><use href="#i-moon"/></svg></button>
+          <button class="icon-btn" id="btn-settings" title="Settings"><svg><use href="#i-gear"/></svg></button>
+        </div>
+      </header>
+
+      <h1 class="greeting" id="greeting">Good evening</h1>
+      <div class="status-line"><span class="pulse" id="state-dot"></span><span id="status-text">Starting up…</span></div>
+
+      <nav class="rail">
+        <button class="icon-btn" id="btn-handsfree" title="Hands-free: just talk"><svg><use href="#i-wave"/></svg></button>
+        <button class="icon-btn" id="view-graph" title="Expand memory graph"><svg><use href="#i-graph"/></svg></button>
+        <button class="icon-btn" id="btn-stop" title="Stop (Esc)"><svg><use href="#i-stop"/></svg></button>
+      </nav>
+
+      <div class="presence" id="stage">
+        <canvas id="orb" width="640" height="640"></canvas>
+        <div class="callout c1"><span class="cdot"></span><b id="state-label">idle</b><small id="hf-label">hands-free off</small></div>
+        <div class="callout c2"><span class="cdot"></span><b id="model-label">—</b><small>brain</small></div>
+        <div class="callout c3"><span class="cdot"></span><b id="recall-label">0</b><small>memories recalled</small></div>
+      </div>
+
+      <form id="composer" class="composer">
+        <span class="composer-label">Talk to me</span>
+        <input id="input" autocomplete="off" placeholder="Type, or hold Space to speak…" />
+        <button type="submit" class="icon-btn send" title="Send"><svg><use href="#i-send"/></svg></button>
+        <button type="button" id="btn-mic" class="mic" title="Hold to talk"><svg><use href="#i-mic"/></svg></button>
+      </form>
+    </section>
+
+    <!-- ============ right: tiles ============ -->
+    <section class="tiles" id="tiles">
+      <article class="tile t-convo">
+        <div class="tile-head"><span>Conversation</span><span class="muted" id="convo-count"></span></div>
+        <div class="transcript" id="transcript"></div>
+      </article>
+
+      <article class="tile t-voice">
+        <div class="tile-head"><span>Voice</span><span class="muted" id="voice-mode">push to talk</span></div>
+        <div class="big" id="voice-state">Idle</div>
+        <canvas id="wave"></canvas>
+        <div class="tile-foot"><span id="stt-label">Whisper</span><span id="tts-label">Piper</span></div>
+      </article>
+
+      <article class="tile t-memory" id="memory-tile">
+        <div class="tile-head"><span>Memory</span>
+          <button class="icon-btn ghost" id="view-orb" title="Expand / collapse"><svg><use href="#i-arrow"/></svg></button></div>
+        <div class="big"><span id="mem-count">0</span><small> things I know</small></div>
+        <canvas id="graph"></canvas>
         <div id="graph-hud" class="graph-hud hidden">
           <div id="graph-query" class="graph-query"></div>
           <div class="graph-tools">
             <input id="graph-search" placeholder="Search memory…" />
-            <label class="check"><input type="checkbox" id="graph-history" /> show outdated facts</label>
-            <button class="pill" id="graph-fit" title="Fit to view (or double-click)">Fit</button>
+            <label class="check"><input type="checkbox" id="graph-history" /> outdated</label>
+            <button class="pill" id="graph-fit" title="Fit (or double-click)">Fit</button>
           </div>
         </div>
         <aside id="node-panel" class="node-panel hidden"></aside>
-      </section>
+      </article>
 
-      <section class="transcript" id="transcript"></section>
-    </main>
+      <article class="tile t-stat s1">
+        <div class="tile-head"><span>Facts</span><svg class="ico"><use href="#i-arrow"/></svg></div>
+        <div class="big" id="stat-facts">0</div><small class="muted">remembered</small>
+        <svg class="wire" viewBox="0 0 100 100"><g id="wire-a"></g></svg>
+      </article>
+      <article class="tile t-stat s2">
+        <div class="tile-head"><span>Actions</span></div>
+        <div class="big" id="stat-actions">0</div><small class="muted">this session</small>
+        <svg class="wire" viewBox="0 0 100 100"><g id="wire-b"></g></svg>
+      </article>
+      <article class="tile t-stat s3">
+        <div class="tile-head"><span>Mode</span></div>
+        <div class="big small" id="stat-confirm">Careful</div><small class="muted" id="stat-confirm-sub">asks before risky actions</small>
+      </article>
+    </section>
 
     <div id="confirm-box" class="confirm hidden"></div>
-
-    <footer>
-      <button id="btn-handsfree" class="pill" title="Hands-free: just talk">Hands-free: off</button>
-      <form id="composer">
-        <input id="input" autocomplete="off" placeholder="Talk to me, or type here…  (hold Space or the mic to speak)" />
-      </form>
-      <button id="btn-mic" class="mic" title="Hold to talk">🎙</button>
-      <button id="btn-stop" class="pill danger" title="Stop">Stop</button>
-    </footer>
   </div>
 
   <!-- Settings drawer -->
   <aside id="settings" class="drawer hidden">
     <div class="drawer-head">
       <h2>Settings</h2>
-      <button class="icon-btn" id="btn-close-settings">✕</button>
+      <button class="icon-btn" id="btn-close-settings" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <nav class="tabs">
       <button data-tab="model" class="active">Brain</button>

@@ -46,7 +46,7 @@ function onEvent(ev) {
     case "confirm": showConfirm(ev); break;
     case "barge": onBarge(ev); break;
     case "memory_search": onMemorySearch(ev); break;
-    case "memory_saving": $("mem-count").textContent = "· saving…"; break;
+    case "memory_saving": $("graph-query").textContent = "saving what I learned…"; break;
     case "memory_update": onMemoryUpdate(ev); break;
     case "confirm_done": if ($("confirm-box").dataset.id === ev.id) $("confirm-box").classList.add("hidden"); break;
   }
@@ -56,15 +56,19 @@ const STATUS = {
   idle: "At your service.", listening: "Listening…", transcribing: "Catching that…",
   thinking: "Thinking…", acting: "Working on it…", speaking: "Speaking…",
 };
+const VOICE = { idle: "Idle", listening: "Listening", transcribing: "Hearing you", thinking: "Thinking", acting: "Working", speaking: "Speaking" };
 function setStatus() {
   $("status-text").textContent = STATUS[state] || state;
   $("state-label").textContent = state;
+  $("voice-state").textContent = VOICE[state] || state;
+  $("state-dot").classList.toggle("busy", state !== "idle");
 }
 
 function addMsg(kind, text) {
   const d = document.createElement("div");
   d.className = "msg " + kind;
   d.textContent = text;
+  if (kind === "user" || kind === "assistant") $("convo-count").textContent = `${++msgCount} messages`;
   $("transcript").appendChild(d);
   d.scrollIntoView({ behavior: "smooth", block: "end" });
 }
@@ -84,6 +88,7 @@ function endTool(ev) {
   const d = toolEls[ev.id];
   if (!d) return;
   d.className = "tool " + (ev.ok ? "ok" : "err");
+  $("stat-actions").textContent = ++actionCount;
   const body = d.querySelector(".body");
   const pre = document.createElement("pre");
   pre.textContent = ev.text;
@@ -99,7 +104,7 @@ function endTool(ev) {
 function showConfirm(ev) {
   const box = $("confirm-box");
   box.dataset.id = ev.id;
-  box.innerHTML = `<h4>⚠ Permission needed</h4><div class="reason"></div><code></code>
+  box.innerHTML = `<h4>Permission needed</h4><div class="reason"></div><code></code>
     <div class="btns"><button class="pill" data-a="0">Deny</button><button class="pill primary" data-a="1">Allow</button></div>
     <div class="hint" style="margin-top:6px;font-size:12px">You can also just say “yes” or “no”.</div>`;
   box.querySelector(".reason").textContent = `${ev.reason} — ${ev.tool}`;
@@ -134,68 +139,158 @@ window.addEventListener("keyup", (e) => { if (e.code === "Space") pttStop(); });
 
 $("btn-handsfree").onclick = () => send({ type: "handsfree", on: !handsfree });
 function renderHandsfree() {
-  $("btn-handsfree").textContent = "Hands-free: " + (handsfree ? "on" : "off");
   $("btn-handsfree").classList.toggle("on", handsfree);
+  $("btn-handsfree").title = "Hands-free: " + (handsfree ? "on (click to turn off)" : "off (click to just talk)");
+  $("hf-label").textContent = "hands-free " + (handsfree ? "on" : "off");
+  $("voice-mode").textContent = handsfree ? "hands-free" : "push to talk";
 }
 $("btn-stop").onclick = () => send({ type: "stop" });
 $("btn-new").onclick = async () => {
   await fetch(API + "/api/reset", { method: "POST" });
   $("transcript").innerHTML = "";
+  msgCount = 0; $("convo-count").textContent = "";
   addMsg("info", "New conversation.");
 };
 
-// ------------------------------------------------------------------ orb
+// ------------------------------------------------------------------ presence (soft gradient + wireframe)
 const cv = $("orb"), cx = cv.getContext("2d");
-const COLORS = {
-  idle: [60, 200, 255], listening: [122, 240, 255], transcribing: [150, 200, 255],
-  thinking: [140, 120, 255], acting: [255, 181, 71], speaking: [75, 227, 160],
+const blob = document.createElement("canvas"); blob.width = blob.height = 64;
+const bx = blob.getContext("2d");
+const PALETTE = {               // two blob colours per state
+  idle: [[126, 176, 104], [233, 214, 106]], listening: [[200, 236, 80], [240, 205, 90]],
+  transcribing: [[200, 236, 80], [240, 205, 90]], thinking: [[150, 165, 185], [236, 160, 112]],
+  acting: [[236, 150, 100], [242, 196, 82]], speaking: [[120, 186, 96], [214, 243, 74]],
 };
-let t0 = performance.now(), col = [60, 200, 255];
+let t0 = performance.now(), pal = PALETTE.idle.map((c) => c.slice());
+function ink(a) { return document.documentElement.dataset.theme === "dark" ? `rgba(236,239,236,${a})` : `rgba(23,25,26,${a})`; }
 function draw(now) {
   const t = (now - t0) / 1000;
-  level += (targetLevel - level) * 0.2;
-  targetLevel *= 0.92;
-  const target = COLORS[state] || COLORS.idle;
-  col = col.map((c, i) => c + (target[i] - c) * 0.06);
-  const [r, g, b] = col.map(Math.round);
-  const W = cv.width, H = cv.height, R = W * 0.26;
-  cx.clearRect(0, 0, W, H);
+  level += (targetLevel - level) * 0.18;
+  targetLevel *= 0.93;
+  const target = PALETTE[state] || PALETTE.idle;
+  pal = pal.map((c, j) => c.map((v, i) => v + (target[j][i] - v) * 0.04));
   const busy = state === "thinking" || state === "acting" || state === "transcribing";
-  const glow = cx.createRadialGradient(W / 2, H / 2, R * 0.2, W / 2, H / 2, R * 2);
-  glow.addColorStop(0, `rgba(${r},${g},${b},${0.35 + level * 0.4})`);
-  glow.addColorStop(1, "rgba(0,0,0,0)");
-  cx.fillStyle = glow; cx.fillRect(0, 0, W, H);
-  // rings
-  for (let k = 0; k < 3; k++) {
-    cx.beginPath();
-    const pts = 120;
-    for (let i = 0; i <= pts; i++) {
-      const a = (i / pts) * Math.PI * 2;
-      const wob = Math.sin(a * (3 + k) + t * (1.2 + k * 0.7)) * (4 + level * 40) +
-                  Math.sin(a * 7 - t * 2.3) * (busy ? 6 : 1.5);
-      const rr = R * (0.82 + k * 0.16) + wob;
-      const x = W / 2 + Math.cos(a) * rr, y = H / 2 + Math.sin(a) * rr;
-      i ? cx.lineTo(x, y) : cx.moveTo(x, y);
+  const W = cv.width, H = cv.height, C = W / 2;
+
+  // 1) soft blurred blob: paint gradients small, then upscale (cheap, smooth blur)
+  bx.clearRect(0, 0, 64, 64);
+  const blobs = [
+    [32 + Math.sin(t * 0.6) * 6, 30 + Math.cos(t * 0.5) * 5, 20 + level * 8, pal[0], 0.95],
+    [30 + Math.cos(t * 0.45) * 7, 36 + Math.sin(t * 0.7) * 6, 17 + level * 6, pal[1], 0.85],
+    [34 + Math.sin(t * 0.9 + 1) * 5, 32 + Math.cos(t * 0.8) * 5, 12, [255, 255, 255], 0.55],
+  ];
+  for (const [x, y, r, c, a] of blobs) {
+    const g = bx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(${c.map(Math.round)},${a})`);
+    g.addColorStop(1, `rgba(${c.map(Math.round)},0)`);
+    bx.fillStyle = g; bx.fillRect(0, 0, 64, 64);
+  }
+  cx.clearRect(0, 0, W, H);
+  cx.imageSmoothingEnabled = true; cx.imageSmoothingQuality = "high";
+  const S = W * (0.92 + level * 0.12);
+  cx.globalAlpha = 0.95;
+  cx.drawImage(blob, C - S / 2, C - S / 2, S, S);
+  cx.globalAlpha = 1;
+
+  // 2) thin wireframe: two stacked spheres (hourglass), slowly rotating
+  const R = W * 0.17 * (1 + level * 0.06);
+  const spin = t * (busy ? 0.9 : 0.25);
+  cx.lineWidth = 1;
+  for (const cy of [C - R * 0.98, C + R * 0.98]) {
+    for (let i = 1; i < 9; i++) {           // latitude rings
+      const lat = (i / 9) * Math.PI - Math.PI / 2;
+      const ry = Math.cos(lat) * R, yy = cy + Math.sin(lat) * R;
+      cx.beginPath(); cx.ellipse(C, yy, ry, ry * 0.22, 0, 0, Math.PI * 2);
+      cx.strokeStyle = ink(0.10 + 0.05 * Math.abs(Math.sin(lat))); cx.stroke();
     }
-    cx.strokeStyle = `rgba(${r},${g},${b},${0.75 - k * 0.22})`;
-    cx.lineWidth = 2.2 - k * 0.5;
-    cx.stroke();
+    for (let i = 0; i < 10; i++) {          // meridians
+      const a = spin + (i / 10) * Math.PI;
+      cx.beginPath(); cx.ellipse(C, cy, Math.abs(Math.cos(a)) * R, R, 0, 0, Math.PI * 2);
+      cx.strokeStyle = ink(0.12); cx.stroke();
+    }
   }
-  // core
-  const core = cx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, R * (0.55 + level * 0.25));
-  core.addColorStop(0, `rgba(255,255,255,0.9)`);
-  core.addColorStop(0.25, `rgba(${r},${g},${b},0.85)`);
-  core.addColorStop(1, `rgba(${r},${g},${b},0)`);
-  cx.fillStyle = core; cx.beginPath(); cx.arc(W / 2, H / 2, R * 0.8, 0, Math.PI * 2); cx.fill();
-  // spinner arc while busy
+  // 3) lime focal dot with a level halo
+  const halo = 10 + level * 40 + (busy ? 6 * (0.5 + 0.5 * Math.sin(t * 6)) : 0);
+  const g = cx.createRadialGradient(C, C, 0, C, C, halo * 2);
+  g.addColorStop(0, "rgba(214,243,74,0.55)"); g.addColorStop(1, "rgba(214,243,74,0)");
+  cx.fillStyle = g; cx.beginPath(); cx.arc(C, C, halo * 2, 0, Math.PI * 2); cx.fill();
+  cx.fillStyle = "#d6f34a"; cx.beginPath(); cx.arc(C, C, 6, 0, Math.PI * 2); cx.fill();
+  cx.strokeStyle = ink(0.35); cx.lineWidth = 1; cx.beginPath(); cx.arc(C, C, 10, 0, Math.PI * 2); cx.stroke();
+  // busy: thin orbit arc
   if (busy) {
-    cx.beginPath();
-    cx.arc(W / 2, H / 2, R * 1.35, t * 3, t * 3 + 1.2);
-    cx.strokeStyle = `rgba(${r},${g},${b},0.9)`; cx.lineWidth = 3; cx.stroke();
+    cx.strokeStyle = ink(0.45); cx.lineWidth = 1.2;
+    cx.beginPath(); cx.arc(C, C, R * 2.25, spin * 2, spin * 2 + 0.9); cx.stroke();
   }
+  drawWave(t);
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
+
+// voice tile: thin layered sine waves that follow the audio level
+const wv = $("wave"), wx = wv.getContext("2d");
+const levels = new Array(60).fill(0);
+let lastPush = 0;
+function drawWave(t) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(wv.clientWidth * dpr), h = Math.round(wv.clientHeight * dpr);
+  if (!w || !h) return;
+  if (wv.width !== w || wv.height !== h) { wv.width = w; wv.height = h; }
+  if (t - lastPush > 0.05) { levels.push(level); levels.shift(); lastPush = t; }
+  wx.clearRect(0, 0, w, h);
+  const amp = levels.reduce((a, b) => a + b, 0) / levels.length;
+  for (let k = 0; k < 5; k++) {
+    wx.beginPath();
+    for (let x = 0; x <= w; x += 4 * dpr) {
+      const p = x / w;
+      const env = Math.sin(p * Math.PI);
+      const y = h * 0.5 + Math.sin(p * (8 + k * 1.3) + t * (1.5 + k * 0.4) + k) * env * h * (0.06 + amp * 0.42) * (1 - k * 0.12);
+      x ? wx.lineTo(x, y) : wx.moveTo(x, y);
+    }
+    wx.strokeStyle = `rgba(255,255,255,${0.85 - k * 0.14})`; wx.lineWidth = (1.4 - k * 0.15) * dpr; wx.stroke();
+  }
+  // moving dot like a playhead
+  const px = w * (0.15 + 0.7 * ((t * 0.08) % 1)), py = h * 0.5;
+  wx.fillStyle = "#d6f34a"; wx.beginPath(); wx.arc(px, py, 4 * dpr, 0, Math.PI * 2); wx.fill();
+}
+
+// decorative wireframes in the small tiles
+function wire(id, kind) {
+  const g = $(id); let out = "";
+  if (kind === "onion") for (let i = 1; i <= 9; i++) out += `<ellipse cx="50" cy="55" rx="${i * 4.5}" ry="${i * 5.5}" transform="rotate(${i * 6} 50 55)"/>`;
+  else for (let i = 0; i < 10; i++) out += `<ellipse cx="50" cy="${25 + i * 6}" rx="${40 - i * 4}" ry="${5 - i * .35}"/>`;
+  g.innerHTML = out;
+}
+wire("wire-a", "onion"); wire("wire-b", "cone");
+
+// greeting + labels
+function greet() {
+  const h = new Date().getHours();
+  const part = h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+  const who = settings?.user_name ? `,\n${settings.user_name}` : "";
+  $("greeting").textContent = part + who;
+  $("greeting").style.whiteSpace = "pre-line";
+}
+let actionCount = 0, recallCount = 0, msgCount = 0;
+function renderLabels() {
+  if (!settings) return;
+  greet();
+  $("brand-name").textContent = settings.assistant_name || "Jarvis";
+  $("model-label").textContent = settings.llm.model || settings.llm.provider;
+  const stt = settings.stt.provider === "local_whisper" ? `Whisper ${settings.stt.local_model}` : settings.stt.provider;
+  const tts = { piper: "Piper", kokoro: "Kokoro", elevenlabs: "ElevenLabs", fish_audio: "Fish Audio", openai: "OpenAI", none: "silent" }[settings.tts.provider] || settings.tts.provider;
+  $("stt-label").textContent = "hear · " + stt;
+  $("tts-label").textContent = "speak · " + tts;
+  const mode = settings.agent.confirm_mode;
+  $("stat-confirm").textContent = { risky: "Careful", always: "Cautious", never: "Autonomous" }[mode] || mode;
+  $("stat-confirm-sub").textContent = { risky: "asks before risky actions", always: "asks before every change", never: "acts without asking" }[mode] || "";
+}
+const toggleTheme = () => {
+  const dark = document.documentElement.dataset.theme !== "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  try { localStorage.setItem("jarvis-theme", dark ? "dark" : "light"); } catch (_) {}
+};
+try { const th = localStorage.getItem("jarvis-theme"); if (th) document.documentElement.dataset.theme = th; } catch (_) {}
+$("btn-theme").onclick = toggleTheme;
 
 // ------------------------------------------------------------------ settings
 $("btn-settings").onclick = openSettings;
@@ -219,7 +314,7 @@ function opt(sel, items, value) {
 async function loadSettings() {
   const r = await (await fetch(API + "/api/settings")).json();
   settings = r.settings; presets = r.presets;
-  $("brand-name").textContent = (settings.assistant_name || "Jarvis").toUpperCase();
+  renderLabels();
 }
 
 async function openSettings() {
@@ -346,29 +441,31 @@ async function refreshModels() {
 const graph = new MemoryGraph($("graph"), { onSelect: showNode });
 window.jarvisGraph = graph;   // handy for debugging in devtools
 let graphView = false, graphLoaded = false;
+graph.visible = true;             // the memory tile always shows the live graph
 
 async function loadGraph() {
   try {
     const g = await (await fetch(API + "/api/graph" + ($("graph-history").checked ? "?include_invalid=true" : ""))).json();
     graph.setData(g);
-    $("mem-count").textContent = `· ${g.nodes.length}`;
-    if (!graphLoaded && graphView) { graphLoaded = true; setTimeout(() => graph.fit(), 1200); }
-  } catch (_) { $("mem-count").textContent = "· off"; }
+    $("mem-count").textContent = g.nodes.length;
+    $("stat-facts").textContent = g.edges.filter((e) => e.valid !== false).length;
+    if (!graphLoaded) { graphLoaded = true; setTimeout(() => graph.fit(), 1500); }
+  } catch (_) { $("mem-count").textContent = "—"; }
 }
 
+// expanded = the memory tile takes over the right side (conversation stays visible)
 function setView(g) {
   graphView = g;
-  graph.visible = g;
-  $("stage").classList.toggle("graph-mode", g);
-  $("graph").classList.toggle("hidden", !g);
+  $("tiles").classList.toggle("expanded", g);
   $("graph-hud").classList.toggle("hidden", !g);
-  if (!g) $("node-panel").classList.add("hidden");
-  $("view-orb").classList.toggle("active", !g);
-  $("view-graph").classList.toggle("active", g);
+  if (!g) { $("node-panel").classList.add("hidden"); graph.selected = null; }
+  $("view-graph").classList.toggle("on", g);
+  $("view-orb").innerHTML = `<svg><use href="#${g ? "i-collapse" : "i-arrow"}"/></svg>`;
+  setTimeout(() => graph.fit(), 60);
   if (g) loadGraph();
 }
-$("view-orb").onclick = () => setView(false);
-$("view-graph").onclick = () => setView(true);
+$("view-orb").onclick = () => setView(!graphView);
+$("view-graph").onclick = () => setView(!graphView);
 $("graph-fit").onclick = () => graph.fit();
 $("graph-history").onchange = loadGraph;
 $("graph-search").onkeydown = async (e) => {
@@ -386,15 +483,17 @@ function onMemorySearch(ev) {
     d.className = "tool ok mem";
     d.innerHTML = `<div class="head"><b>memory</b> <span></span></div>`;
     d.querySelector("span").textContent = `recalled ${ev.nodes.length} related memories`;
+    recallCount += ev.nodes.length; $("recall-label").textContent = recallCount;
     d.onclick = () => { setView(true); graph.highlight(ev.nodes, ev.edges); };
     $("transcript").appendChild(d);
     d.scrollIntoView({ block: "end" });
   }
-  $("graph-query").textContent = "🔎 " + ev.query.slice(0, 140);
+  $("graph-query").textContent = "searching · " + ev.query.slice(0, 140);
   graph.highlight(ev.nodes, ev.edges, "search");
 }
 
 async function onMemoryUpdate(ev) {
+  $("graph-query").textContent = "";
   await loadGraph();
   if (ev.error) { $("mem-count").textContent = "· save failed"; return; }
   if (ev.nodes.length || ev.edges.length) {

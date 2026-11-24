@@ -2,8 +2,8 @@
 // Usage: const g = new MemoryGraph(canvas, {onSelect}); g.setData({nodes, edges}); g.highlight(ids, edgeIds)
 (function () {
   const TYPE_COLORS = {
-    Person: "#7af0ff", Organization: "#ffb547", Place: "#4be3a0", Project: "#b18cff", Preference: "#ff7eb6",
-    Event: "#ffd86b", Task: "#ff9361", Device: "#8fb7ff", Skill: "#6be0c8", Concept: "#c9d3df", Thing: "#9fb0c3",
+    Person: "#ffffff", Organization: "#ffe08a", Place: "#c8f0a8", Project: "#d6f34a", Preference: "#ffc2a6",
+    Event: "#fff0b8", Task: "#ffb38a", Device: "#d4e2f2", Skill: "#bff0e2", Concept: "#ece7f5", Thing: "#e9e4dc",
   };
   const colorOf = (t) => TYPE_COLORS[t] || TYPE_COLORS.Thing;
 
@@ -107,7 +107,7 @@
       const W = this.cv.width, H = this.cv.height, dpr = this.dpr;
       return [W / 2 + (n.x + this.view.x) * this.view.k * dpr, H / 2 + (n.y + this.view.y) * this.view.k * dpr];
     }
-    _radius(n) { return (n.id === "user" ? 11 : 5 + Math.min(6, (this.degree.get(n.id) || 0))) ; }
+    _radius(n) { return (n.id === "user" ? 10 : 4 + Math.min(5, (this.degree.get(n.id) || 0))) ; }
 
     _frame(t) {
       requestAnimationFrame((tt) => this._frame(tt));
@@ -128,15 +128,15 @@
         const sel = this.selected && (e.source === this.selected || e.target === this.selected);
         cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2);
         if (h) {
-          cx.strokeStyle = h.kind === "new" ? `rgba(75,227,160,${0.5 + pulse * 0.5})` : `rgba(122,240,255,${0.5 + pulse * 0.5})`;
+          cx.strokeStyle = h.kind === "new" ? `rgba(255,255,255,${0.6 + pulse * 0.4})` : `rgba(214,243,74,${0.6 + pulse * 0.4})`;
           cx.lineWidth = 2.5 * dpr;
         } else {
-          cx.strokeStyle = sel ? "rgba(216,230,243,0.6)" : (anyHl ? "rgba(60,90,120,0.18)" : "rgba(80,120,160,0.35)");
+          cx.strokeStyle = sel ? "rgba(255,255,255,0.85)" : (anyHl ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.42)");
           cx.lineWidth = (sel ? 1.6 : 1) * dpr;
         }
         cx.stroke();
         if ((h || sel || this.hover === e.source || this.hover === e.target) && k > 0.5) {
-          cx.fillStyle = h ? "#d8f6ff" : "rgba(170,190,210,0.85)";
+          cx.fillStyle = h ? "#ffffff" : "rgba(255,255,255,0.85)";
           cx.font = `${10 * dpr}px Segoe UI, system-ui, sans-serif`;
           cx.textAlign = "center";
           cx.fillText(e.relation.replace(/_/g, " "), (x1 + x2) / 2, (y1 + y2) / 2 - 3 * dpr);
@@ -150,24 +150,28 @@
         const col = colorOf(n.type);
         if (h) {
           const g = cx.createRadialGradient(x, y, r, x, y, r * (3 + pulse * 2));
-          const c = h.kind === "new" ? "75,227,160" : "122,240,255";
+          const c = h.kind === "new" ? "255,255,255" : "214,243,74";
           g.addColorStop(0, `rgba(${c},0.55)`); g.addColorStop(1, `rgba(${c},0)`);
           cx.fillStyle = g; cx.beginPath(); cx.arc(x, y, r * (3 + pulse * 2), 0, Math.PI * 2); cx.fill();
         }
         cx.globalAlpha = anyHl && !h && n.id !== this.selected ? 0.35 : 1;
         cx.beginPath(); cx.arc(x, y, r, 0, Math.PI * 2);
         cx.fillStyle = col; cx.fill();
-        if (n.id === this.selected || n.id === this.hover) { cx.lineWidth = 2 * dpr; cx.strokeStyle = "#fff"; cx.stroke(); }
+        cx.lineWidth = (n.id === this.selected || n.id === this.hover ? 2 : 1) * dpr;
+        cx.strokeStyle = n.id === this.selected || n.id === this.hover ? "#17191a" : "rgba(23,25,26,0.25)"; cx.stroke();
+        if (n.id === "user") { cx.fillStyle = "#d6f34a"; cx.beginPath(); cx.arc(x, y, r * 0.45, 0, Math.PI * 2); cx.fill(); }
         if (k > 0.45 || h || n.id === "user") {
-          cx.fillStyle = h ? "#ffffff" : "rgba(216,230,243,0.9)";
+          cx.fillStyle = "#ffffff";
+          cx.shadowColor = "rgba(0,0,0,0.25)"; cx.shadowBlur = 4 * dpr;
           cx.font = `${(n.id === "user" ? 13 : 11) * dpr}px Segoe UI, system-ui, sans-serif`;
           cx.textAlign = "center";
           cx.fillText(n.name, x, y + r + 13 * dpr);
+          cx.shadowBlur = 0;
         }
         cx.globalAlpha = 1;
       }
       if (!this.nodes.size) {
-        cx.fillStyle = "rgba(125,143,163,0.9)"; cx.font = `${13 * dpr}px Segoe UI, system-ui, sans-serif`; cx.textAlign = "center";
+        cx.fillStyle = "rgba(255,255,255,0.9)"; cx.font = `${13 * dpr}px Segoe UI, system-ui, sans-serif`; cx.textAlign = "center";
         cx.fillText("No memories yet. Tell me about yourself.", this.cv.width / 2, this.cv.height / 2);
       }
     }
