@@ -1,0 +1,13 @@
+backend/.venv/
+**/__pycache__/
+app/node_modules/
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# models, secrets, logs
+*.onnx
+*.bin
+.env
+.env.*
+settings.json
+*.log

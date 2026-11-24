@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand"><span class="dot" id="conn-dot"></span><span id="brand-name">JARVIS</span></div>
+      <div class="status" id="status-text">Starting up…</div>
+      <div class="hdr-actions">
+        <button class="icon-btn" id="btn-new" title="New conversation">⟲</button>
+        <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="stage">
+        <canvas id="orb" width="520" height="520"></canvas>
+        <div class="state-label" id="state-label">idle</div>
+      </section>
+
+      <section class="transcript" id="transcript"></section>
+    </main>
+
+    <div id="confirm-box" class="confirm hidden"></div>
+
+    <footer>
+      <button id="btn-handsfree" class="pill" title="Hands-free: just talk">Hands-free: off</button>
+      <form id="composer">
+        <input id="input" autocomplete="off" placeholder="Talk to me, or type here…  (hold Space or the mic to speak)" />
+      </form>
+      <button id="btn-mic" class="mic" title="Hold to talk">🎙</button>
+      <button id="btn-stop" class="pill danger" title="Stop">Stop</button>
+    </footer>
+  </div>
+
+  <!-- Settings drawer -->
+  <aside id="settings" class="drawer hidden">
+    <div class="drawer-head">
+      <h2>Settings</h2>
+      <button class="icon-btn" id="btn-close-settings">✕</button>
+    </div>
+    <nav class="tabs">
+      <button data-tab="model" class="active">Brain</button>
+      <button data-tab="voice">Voice</button>
+      <button data-tab="models">Local models</button>
+      <button data-tab="behaviour">Behaviour</button>
+      <button data-tab="memory">Memory</button>
+    </nav>
+
+    <div class="tab" id="tab-model">
+      <label>Provider
+        <select id="llm-provider"></select>
+      </label>
+      <label>Base URL <small>(OpenAI-compatible: Ollama, LM Studio, vLLM, OpenRouter…)</small>
+        <input id="llm-base" placeholder="http://localhost:11434/v1" />
+      </label>
+      <label>Model name
+        <input id="llm-model" placeholder="claude-opus-5-5 / gpt-4.1 / deepseek-chat / qwen2.5:7b" />
+      </label>
+      <label>API key <small>(stored locally in ~/.jarvis/settings.json)</small>
+        <input id="llm-key" type="password" placeholder="sk-…" />
+      </label>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="llm-vision" /> Model can see images (enables screenshots)</label>
+      </div>
+      <div class="row2">
+        <label>Claude effort
+          <select id="llm-effort"><option value="">default</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option></select>
+        </label>
+        <label>Temperature (OpenAI-compatible)
+          <input id="llm-temp" type="number" step="0.1" min="0" max="2" />
+        </label>
+      </div>
+    </div>
+
+    <div class="tab hidden" id="tab-voice">
+      <h3>Speech to text</h3>
+      <label>Provider
+        <select id="stt-provider">
+          <option value="local_whisper">Local Whisper (offline, default)</option>
+          <option value="openai">OpenAI Whisper API</option>
+          <option value="groq">Groq Whisper (very fast)</option>
+          <option value="elevenlabs">ElevenLabs Scribe</option>
+        </select>
+      </label>
+      <div class="row2">
+        <label>Local Whisper model <select id="stt-model"></select></label>
+        <label>Language <input id="stt-lang" placeholder="auto (e.g. en, ta, hi)" /></label>
+      </div>
+      <label>Device
+        <select id="stt-device"><option value="auto">auto</option><option value="cpu">CPU</option><option value="cuda">NVIDIA GPU</option></select>
+      </label>
+
+      <h3>Text to speech</h3>
+      <label>Provider
+        <select id="tts-provider">
+          <option value="piper">Piper (local, light, default)</option>
+          <option value="kokoro">Kokoro (local, more natural)</option>
+          <option value="elevenlabs">ElevenLabs</option>
+          <option value="fish_audio">Fish Audio</option>
+          <option value="openai">OpenAI TTS</option>
+          <option value="none">Silent (text only)</option>
+        </select>
+      </label>
+      <div class="row2">
+        <label>Piper voice <select id="tts-piper"></select></label>
+        <label>Kokoro voice <select id="tts-kokoro"></select></label>
+      </div>
+      <div class="row2">
+        <label>ElevenLabs voice ID <input id="tts-el-voice" /></label>
+        <label>Fish Audio voice (reference id) <input id="tts-fish" /></label>
+      </div>
+      <div class="row2">
+        <label>OpenAI voice <input id="tts-oa-voice" placeholder="onyx" /></label>
+        <label>Speed <input id="tts-speed" type="number" step="0.05" min="0.5" max="2" /></label>
+      </div>
+
+      <h3>Voice API keys</h3>
+      <div class="row2">
+        <label>ElevenLabs <input id="key-elevenlabs" type="password" /></label>
+        <label>Fish Audio <input id="key-fish_audio" type="password" /></label>
+      </div>
+      <div class="row2">
+        <label>OpenAI (voice) <input id="key-openai" type="password" /></label>
+        <label>Groq <input id="key-groq" type="password" /></label>
+      </div>
+
+      <h3>Audio devices</h3>
+      <div class="row2">
+        <label>Microphone <select id="audio-in"></select></label>
+        <label>Speaker <select id="audio-out"></select></label>
+      </div>
+      <button class="pill" id="btn-test-voice" type="button">▶ Test voice</button>
+    </div>
+
+    <div class="tab hidden" id="tab-models">
+      <p class="hint">Local models run fully offline. Whisper <b>small</b> + Piper is a good default for low-end PCs; use <b>base</b> or <b>tiny</b> on very old machines.</p>
+      <h3>Whisper (speech to text)</h3><div id="list-whisper" class="mlist"></div>
+      <h3>Piper voices (text to speech)</h3><div id="list-piper" class="mlist"></div>
+      <h3>Kokoro (text to speech)</h3><div id="list-kokoro" class="mlist"></div>
+    </div>
+
+    <div class="tab hidden" id="tab-behaviour">
+      <div class="row2">
+        <label>Assistant name <input id="beh-name" /></label>
+        <label>What should I call you? <input id="beh-user" /></label>
+      </div>
+      <label>Ask before acting
+        <select id="beh-confirm">
+          <option value="risky">Only for risky actions (deleting, admin, overwriting) — recommended</option>
+          <option value="always">For every action that changes something</option>
+          <option value="never">Never — full autonomy</option>
+        </select>
+      </label>
+      <div class="row2">
+        <label>Max steps per task <input id="beh-steps" type="number" min="1" max="200" /></label>
+        <label>Silence before I reply (ms) <input id="beh-silence" type="number" step="100" /></label>
+      </div>
+      <label class="check"><input type="checkbox" id="beh-speak" /> Speak replies aloud</label>
+      <label class="check"><input type="checkbox" id="beh-headless" /> Hide the automation browser window</label>
+    </div>
+
+    <div class="tab hidden" id="tab-memory">
+      <p class="hint">Things I've learned about you. Edit freely.</p>
+      <textarea id="memory" rows="16"></textarea>
+    </div>
+
+    <div class="drawer-foot">
+      <span id="save-msg"></span>
+      <button class="pill primary" id="btn-save">Save</button>
+    </div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>

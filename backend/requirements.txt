@@ -1,0 +1,21 @@
+# web server
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+# LLM providers
+anthropic>=0.75
+openai>=1.50
+# speech
+faster-whisper>=1.1        # local speech-to-text (Whisper, CTranslate2, runs on CPU)
+piper-tts>=1.3             # local text-to-speech (default, very light)
+kokoro-onnx>=0.4           # local text-to-speech (higher quality, optional)
+sounddevice>=0.5
+soundfile>=0.12
+numpy>=1.26
+# computer & browser use
+pyautogui>=0.9.54
+mss>=9.0
+pillow>=10.0
+pyperclip>=1.9
+psutil>=5.9
+playwright>=1.48
