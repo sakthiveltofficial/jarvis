@@ -18,9 +18,23 @@
     </header>
 
     <main>
-      <section class="stage">
+      <section class="stage" id="stage">
+        <div class="view-toggle">
+          <button id="view-orb" class="active">Jarvis</button>
+          <button id="view-graph">Memory graph <span id="mem-count"></span></button>
+        </div>
         <canvas id="orb" width="520" height="520"></canvas>
         <div class="state-label" id="state-label">idle</div>
+        <canvas id="graph" class="hidden"></canvas>
+        <div id="graph-hud" class="graph-hud hidden">
+          <div id="graph-query" class="graph-query"></div>
+          <div class="graph-tools">
+            <input id="graph-search" placeholder="Search memory…" />
+            <label class="check"><input type="checkbox" id="graph-history" /> show outdated facts</label>
+            <button class="pill" id="graph-fit" title="Fit to view (or double-click)">Fit</button>
+          </div>
+        </div>
+        <aside id="node-panel" class="node-panel hidden"></aside>
       </section>
 
       <section class="transcript" id="transcript"></section>
@@ -166,8 +180,19 @@
     </div>
 
     <div class="tab hidden" id="tab-memory">
-      <p class="hint">Things I've learned about you. Edit freely.</p>
-      <textarea id="memory" rows="16"></textarea>
+      <p class="hint">I keep a knowledge graph of what matters to you: people, projects, preferences, plans and how they change over time. It's stored only on this computer (~/.jarvis/graph.db). Open the <b>Memory graph</b> view to explore it; click a node to see or forget it.</p>
+      <p id="mem-stats" class="hint"></p>
+      <label class="check"><input type="checkbox" id="mem-auto" /> Automatically save what I learn after every conversation turn</label>
+      <h3>Interruptions</h3>
+      <label class="check"><input type="checkbox" id="barge-on" /> Let me interrupt Jarvis by talking (hands-free mode)</label>
+      <div class="row2">
+        <label>Echo guard <small>(raise if Jarvis interrupts itself through your speakers)</small>
+          <input id="barge-echo" type="number" step="0.1" min="0" max="3" /></label>
+        <label>Speech needed before interrupting (ms)
+          <input id="barge-ms" type="number" step="100" min="300" max="3000" /></label>
+      </div>
+      <h3>Danger zone</h3>
+      <button class="pill danger" id="mem-clear" type="button">Forget everything</button>
     </div>
 
     <div class="drawer-foot">
@@ -176,6 +201,7 @@
     </div>
   </aside>
 
+  <script src="graph.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

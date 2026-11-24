@@ -22,7 +22,8 @@ files, mouse and keyboard, apps, and a real web browser.
 │            Groq, ElevenLabs                              │
 │            TTS: local Piper / Kokoro, ElevenLabs,        │
 │            Fish Audio, OpenAI                            │
-│ audio.py   mic capture, energy VAD, playback             │
+│ audio.py   mic capture, energy VAD, barge-in, playback   │
+│ memory.py  long-term knowledge graph (LadybugDB/Kùzu)    │
 │ models.py  in-app download of Whisper/Piper/Kokoro       │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -81,8 +82,40 @@ cd backend && .venv/bin/python -m jarvis.server     # Windows: .venv\Scripts\pyt
 
 Low-end PC tips: Whisper `base` or `tiny.en` + Piper. With a GPU, set STT device to `cuda` and use `distil-large-v3`.
 
-Hands-free mode uses a simple energy-based voice detector and mutes the mic while Jarvis speaks, so
-headphones aren't required. While a permission prompt is open you can answer by voice ("yes" / "no").
+Hands-free mode uses an adaptive energy-based voice detector. While a permission prompt is open you can
+answer by voice ("yes" / "no").
+
+### Natural interruptions (barge-in)
+
+In hands-free mode Jarvis keeps listening while it talks:
+
+1. Sustained sound louder than what the speakers are playing (an echo guard) becomes a candidate.
+   Short bumps and coughs are ignored.
+2. After ~0.9 s of speech it transcribes that snippet and decides:
+   - **Real interruption** (two or more words of new speech, or "stop", "wait", "hold on", "Jarvis",
+     "actually"…): it stops talking at once, keeps recording you, and answers what you said.
+   - **Not an interruption** ("mm-hmm", "yeah", "okay", noise, or its own voice coming back through the
+     speakers): it carries on talking and shows "(heard … kept talking)" in the transcript.
+
+Tune it in ⚙ → Memory → Interruptions. With loud speakers and no headphones, raise **Echo guard** if Jarvis
+interrupts itself.
+
+## Long-term memory (knowledge graph)
+
+Jarvis builds a personal knowledge graph in an embedded graph database
+([LadybugDB](https://github.com/LadybugDB/ladybug), the maintained fork of Kùzu; Cypher, no server):
+
+- **Saving:** after every turn, the configured LLM extracts durable knowledge (people, relationships,
+  projects, preferences, plans, dates, corrections) into `Entity` nodes and `Fact` edges. When something
+  changes ("I moved to Bangalore"), the old fact is marked outdated rather than deleted, so the graph keeps
+  a timeline over months and years. Saying "remember that…" saves right away.
+- **Recall:** each message searches the graph (keyword match on entities and facts, then a one-hop
+  expansion) and attaches the relevant subgraph to the prompt. The most recent facts about you are always
+  in the system prompt, and the agent can call `memory_search` to dig deeper.
+- **See it:** switch the left pane to **Memory graph**. Nodes being searched pulse cyan and new memories
+  flash green. Drag nodes, scroll to zoom, double-click to fit, and click a node to see its facts
+  (including outdated ones) or forget it. "show outdated facts" shows the history.
+- v1's `memory.md` is imported into the graph automatically on first start.
 
 ## Computer control and safety
 
@@ -99,7 +132,7 @@ Jarvis has the same power over your machine as your user account, and more when 
 
 ## Data
 
-Everything lives in `~/.jarvis/`: `settings.json` (including API keys, stored in plain text with user-only permissions), `memory.md` (what Jarvis remembers about you, editable in ⚙ → Memory), `models/` (downloaded speech models) and `browser-profile/` (the automation browser's logins).
+Everything lives in `~/.jarvis/`: `settings.json` (including API keys, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech models) and `browser-profile/` (the automation browser's logins).
 Environment variables like `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ELEVENLABS_API_KEY` and `FISH_AUDIO_API_KEY` also work.
 
 ## Building an installer
@@ -112,6 +145,7 @@ one-click install.
 ## Prototype limits / next steps
 
 - Replies aren't streamed token by token yet; speech starts once the model's turn finishes (sentences are then synthesized and played in a pipeline).
+- Memory recall is lexical plus graph expansion. Adding embeddings would also match paraphrases ("my sibling" for "sister").
 - No wake word yet ("Hey Jarvis"); openWakeWord would slot into `audio.py`.
 - One screen is captured (the primary monitor).
 - Switching LLM provider starts a fresh conversation.

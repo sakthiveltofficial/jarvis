@@ -99,3 +99,33 @@ label.check { display: flex; gap: 8px; align-items: center; color: var(--text); 
   .transcript { border-left: none; border-top: 1px solid var(--line); }
   .row2 { grid-template-columns: 1fr; }
 }
+
+/* ---------------- memory graph view ---------------- */
+.stage { overflow: hidden; }
+.view-toggle { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; z-index: 3;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.view-toggle button { background: transparent; border: none; border-radius: 999px; padding: 5px 14px; color: var(--muted); cursor: pointer; font-size: 13px; }
+.view-toggle button.active { background: var(--panel2); color: var(--accent2); }
+#mem-count { opacity: .7; }
+#graph { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.stage.graph-mode #orb { position: absolute; top: 8px; right: 8px; width: 92px; z-index: 2; pointer-events: none; }
+.stage.graph-mode .state-label { position: absolute; top: 98px; right: 8px; width: 92px; text-align: center; margin: 0; font-size: 9px; z-index: 2; }
+.graph-hud { position: absolute; left: 12px; right: 12px; bottom: 10px; z-index: 2; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.graph-hud > * { pointer-events: auto; }
+.graph-query { color: var(--accent2); font-size: 12px; min-height: 16px; text-shadow: 0 0 8px #000; }
+.graph-tools { display: flex; gap: 10px; align-items: center; }
+.graph-tools input#graph-search { flex: 1; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px; }
+.graph-tools label.check { margin: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.graph-tools .pill { padding: 6px 12px; font-size: 12px; }
+.node-panel { position: absolute; top: 56px; left: 12px; width: min(300px, calc(100% - 24px)); max-height: calc(100% - 150px); overflow-y: auto;
+  background: #0c121bee; border: 1px solid var(--line); border-radius: 12px; padding: 12px; z-index: 4; font-size: 13px; }
+.np-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.np-head b { font-size: 15px; color: var(--accent2); }
+.np-head .icon-btn { width: 26px; height: 26px; font-size: 12px; }
+.np-type { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.np-sum { margin: 8px 0; }
+.np-facts { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.np-fact { padding: 6px 8px; background: var(--panel2); border-radius: 6px; border-left: 2px solid var(--accent); }
+.np-fact.old { opacity: .5; text-decoration: line-through; border-color: var(--muted); }
+.tool.mem { cursor: pointer; border-color: #b18cff; }
+.tool.mem .head b { color: #b18cff; }

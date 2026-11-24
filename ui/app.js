@@ -44,6 +44,10 @@ function onEvent(ev) {
     case "tool_start": addTool(ev); break;
     case "tool_end": endTool(ev); break;
     case "confirm": showConfirm(ev); break;
+    case "barge": onBarge(ev); break;
+    case "memory_search": onMemorySearch(ev); break;
+    case "memory_saving": $("mem-count").textContent = "· saving…"; break;
+    case "memory_update": onMemoryUpdate(ev); break;
     case "confirm_done": if ($("confirm-box").dataset.id === ev.id) $("confirm-box").classList.add("hidden"); break;
   }
 }
@@ -250,7 +254,15 @@ async function openSettings() {
   $("beh-confirm").value = s.agent.confirm_mode; $("beh-steps").value = s.agent.max_steps;
   $("beh-silence").value = s.audio.silence_ms; $("beh-speak").checked = s.agent.speak_replies;
   $("beh-headless").checked = s.agent.headless_browser;
-  $("memory").value = (await (await fetch(API + "/api/memory")).json()).text;
+  $("mem-auto").checked = s.memory?.auto_save !== false;
+  $("barge-on").checked = s.audio.barge_in !== false;
+  $("barge-echo").value = s.audio.echo_gain ?? 0.6;
+  $("barge-ms").value = s.audio.barge_check_ms ?? 900;
+  try {
+    const g = await (await fetch(API + "/api/graph?include_invalid=true")).json();
+    const valid = g.edges.filter((e) => e.valid).length;
+    $("mem-stats").textContent = `${g.nodes.length} entities, ${valid} current facts, ${g.edges.length - valid} outdated facts kept as history.`;
+  } catch (_) { $("mem-stats").textContent = "Graph memory unavailable."; }
   $("save-msg").textContent = "";
   $("settings").classList.remove("hidden");
 }
@@ -275,7 +287,9 @@ function collect() {
       elevenlabs_voice_id: $("tts-el-voice").value.trim(), fish_reference_id: $("tts-fish").value.trim(),
       openai_voice: $("tts-oa-voice").value.trim() || "onyx", speed: Number($("tts-speed").value || 1),
     },
-    audio: { input_device: dev($("audio-in").value), output_device: dev($("audio-out").value), silence_ms: Number($("beh-silence").value || 900) },
+    audio: { input_device: dev($("audio-in").value), output_device: dev($("audio-out").value), silence_ms: Number($("beh-silence").value || 900),
+             barge_in: $("barge-on").checked, echo_gain: Number($("barge-echo").value || 0.6), barge_check_ms: Number($("barge-ms").value || 900) },
+    memory: { auto_save: $("mem-auto").checked },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked },
   };
@@ -283,7 +297,6 @@ function collect() {
 
 $("btn-save").onclick = async () => {
   await fetch(API + "/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(collect()) });
-  await fetch(API + "/api/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: $("memory").value }) });
   await loadSettings();
   $("save-msg").textContent = "Saved ✓";
   setTimeout(() => ($("save-msg").textContent = ""), 2500);
@@ -329,10 +342,126 @@ async function refreshModels() {
   if (active && !$("tab-models").classList.contains("hidden")) modelPoll = setTimeout(refreshModels, 1000);
 }
 
+// ------------------------------------------------------------------ memory graph
+const graph = new MemoryGraph($("graph"), { onSelect: showNode });
+window.jarvisGraph = graph;   // handy for debugging in devtools
+let graphView = false, graphLoaded = false;
+
+async function loadGraph() {
+  try {
+    const g = await (await fetch(API + "/api/graph" + ($("graph-history").checked ? "?include_invalid=true" : ""))).json();
+    graph.setData(g);
+    $("mem-count").textContent = `· ${g.nodes.length}`;
+    if (!graphLoaded && graphView) { graphLoaded = true; setTimeout(() => graph.fit(), 1200); }
+  } catch (_) { $("mem-count").textContent = "· off"; }
+}
+
+function setView(g) {
+  graphView = g;
+  graph.visible = g;
+  $("stage").classList.toggle("graph-mode", g);
+  $("graph").classList.toggle("hidden", !g);
+  $("graph-hud").classList.toggle("hidden", !g);
+  if (!g) $("node-panel").classList.add("hidden");
+  $("view-orb").classList.toggle("active", !g);
+  $("view-graph").classList.toggle("active", g);
+  if (g) loadGraph();
+}
+$("view-orb").onclick = () => setView(false);
+$("view-graph").onclick = () => setView(true);
+$("graph-fit").onclick = () => graph.fit();
+$("graph-history").onchange = loadGraph;
+$("graph-search").onkeydown = async (e) => {
+  if (e.key !== "Enter") return;
+  const q = e.target.value.trim();
+  if (!q) return;
+  const r = await (await fetch(API + "/api/graph/search?q=" + encodeURIComponent(q))).json();
+  onMemorySearch({ query: q, nodes: r.nodes, edges: r.edges, manual: true });
+};
+
+function onMemorySearch(ev) {
+  if (!ev.nodes.length) return;
+  if (!ev.manual) {
+    const d = document.createElement("div");
+    d.className = "tool ok mem";
+    d.innerHTML = `<div class="head"><b>memory</b> <span></span></div>`;
+    d.querySelector("span").textContent = `recalled ${ev.nodes.length} related memories`;
+    d.onclick = () => { setView(true); graph.highlight(ev.nodes, ev.edges); };
+    $("transcript").appendChild(d);
+    d.scrollIntoView({ block: "end" });
+  }
+  $("graph-query").textContent = "🔎 " + ev.query.slice(0, 140);
+  graph.highlight(ev.nodes, ev.edges, "search");
+}
+
+async function onMemoryUpdate(ev) {
+  await loadGraph();
+  if (ev.error) { $("mem-count").textContent = "· save failed"; return; }
+  if (ev.nodes.length || ev.edges.length) {
+    graph.highlight(ev.nodes, ev.edges, "new", 6000);
+    const n = ev.edges.length, inv = (ev.invalidated || []).length;
+    const d = document.createElement("div");
+    d.className = "msg info";
+    d.textContent = `🧠 remembered ${n} new fact${n === 1 ? "" : "s"}${inv ? `, updated ${inv} old one${inv === 1 ? "" : "s"}` : ""}`;
+    d.style.cursor = "pointer";
+    d.onclick = () => { setView(true); graph.highlight(ev.nodes, ev.edges, "new"); };
+    $("transcript").appendChild(d);
+    d.scrollIntoView({ block: "end" });
+  }
+}
+
+function onBarge(ev) {
+  if (ev.accepted) return;   // the interruption simply shows up as your next message
+  const d = document.createElement("div");
+  d.className = "msg info";
+  d.textContent = `(heard “${ev.text || "…"}” — ${ev.reason}, kept talking)`;
+  $("transcript").appendChild(d);
+}
+
+async function showNode(n) {
+  const panel = $("node-panel");
+  const r = await (await fetch(API + "/api/graph/node/" + encodeURIComponent(n.id))).json();
+  const names = Object.fromEntries([...graph.nodes.values()].map((x) => [x.id, x.name]));
+  panel.innerHTML = `<div class="np-head"><b></b><button class="icon-btn" title="Close">✕</button></div>
+    <div class="np-type"></div><p class="np-sum"></p><div class="np-facts"></div>
+    <button class="pill danger np-forget">Forget this</button>`;
+  panel.querySelector("b").textContent = r.entity.name;
+  panel.querySelector(".np-type").textContent = `${r.entity.type} · mentioned ${r.entity.mentions}× · updated ${r.entity.updated.slice(0, 10)}`;
+  panel.querySelector(".np-sum").textContent = r.entity.summary || "";
+  const facts = panel.querySelector(".np-facts");
+  r.facts.sort((a, b) => (b.valid - a.valid) || b.created.localeCompare(a.created));
+  for (const f of r.facts) {
+    const d = document.createElement("div");
+    d.className = "np-fact" + (f.valid ? "" : " old");
+    d.textContent = f.fact;
+    d.title = `${names[f.source] || f.source} —${f.relation}→ ${names[f.target] || f.target}\nnoted ${f.created}` + (f.valid ? "" : `\noutdated since ${f.invalidated}`);
+    facts.appendChild(d);
+  }
+  panel.querySelector(".icon-btn").onclick = () => { panel.classList.add("hidden"); graph.selected = null; };
+  const fb = panel.querySelector(".np-forget");
+  if (n.id === "user") fb.remove();
+  else fb.onclick = async () => {
+    if (fb.dataset.armed !== "1") { fb.dataset.armed = "1"; fb.textContent = "Click again to forget"; return; }
+    await fetch(API + "/api/graph/node/" + encodeURIComponent(n.id), { method: "DELETE" });
+    panel.classList.add("hidden"); graph.selected = null; loadGraph();
+  };
+  panel.classList.remove("hidden");
+}
+
+$("mem-clear").onclick = async () => {
+  const b = $("mem-clear");
+  if (b.dataset.armed !== "1") { b.dataset.armed = "1"; b.textContent = "Click again to erase all memories"; return; }
+  await fetch(API + "/api/graph/clear", { method: "POST" });
+  b.dataset.armed = ""; b.textContent = "Forget everything";
+  $("mem-stats").textContent = "All memories erased.";
+  loadGraph();
+};
+
 // ------------------------------------------------------------------ boot
 (async () => {
   await waitForBackend();
   await loadSettings();
   connect();
+  loadGraph();
   addMsg("info", "Hold Space (or the mic) to talk, or turn on hands-free. Open ⚙ to pick your model and voices.");
 })();

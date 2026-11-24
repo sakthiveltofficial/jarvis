@@ -115,14 +115,40 @@ def reset():
     return {"ok": True}
 
 
-@app.get("/api/memory")
-def memory():
-    return {"text": config.MEMORY_FILE.read_text("utf-8") if config.MEMORY_FILE.exists() else ""}
+def _mem():
+    if session.memory is None:
+        raise HTTPException(503, "graph memory unavailable")
+    return session.memory
 
 
-@app.post("/api/memory")
-def set_memory(body: dict):
-    config.MEMORY_FILE.write_text(body.get("text", ""), "utf-8")
+@app.get("/api/graph")
+def graph(include_invalid: bool = False):
+    return _mem().graph(include_invalid)
+
+
+@app.get("/api/graph/search")
+def graph_search(q: str):
+    return _mem().search(q)
+
+
+@app.get("/api/graph/node/{node_id}")
+def graph_node(node_id: str):
+    m = _mem()
+    ent = next((e for e in m.entities() if e["id"] == node_id), None)
+    if not ent:
+        raise HTTPException(404, "not found")
+    return {"entity": ent, "facts": m.facts(valid_only=False, around=[node_id])}
+
+
+@app.delete("/api/graph/node/{node_id}")
+def graph_forget(node_id: str):
+    _mem().forget(node_id)
+    return {"ok": True}
+
+
+@app.post("/api/graph/clear")
+def graph_clear():
+    _mem().clear()
     return {"ok": True}
 
 

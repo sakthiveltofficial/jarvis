@@ -6,13 +6,11 @@ import getpass
 import os
 import platform
 
-from . import config
 
 
-def system_prompt(settings: dict, vision: bool) -> str:
+def system_prompt(settings: dict, vision: bool, profile: str = "") -> str:
     name = settings.get("assistant_name") or "Jarvis"
     user = settings.get("user_name") or _user()
-    memory = config.MEMORY_FILE.read_text("utf-8").strip() if config.MEMORY_FILE.exists() else ""
     now = datetime.datetime.now().strftime("%A, %d %B %Y, %H:%M")
     os_desc = f"{platform.system()} {platform.release()} ({platform.machine()})"
     shell = "PowerShell" if os.name == "nt" else os.environ.get("SHELL", "/bin/sh")
@@ -44,7 +42,11 @@ What you can do
 - For web tasks, use the `browser` tool. For searches, navigate to https://duckduckgo.com/?q=<query>.
 - Some actions require {user}'s approval; the app asks them automatically. If an action is declined,
   accept it gracefully and offer an alternative.
-- Use `remember` to save lasting facts about {user} (preferences, people, projects). Don't save trivia.
+- You have a long-term memory: a knowledge graph built from every conversation. Relevant memories are
+  attached to {user}'s messages in a <memory> block (ids in brackets are internal; never read them out).
+  Use them naturally, the way a friend remembers, without announcing "according to my memory".
+  Use `memory_search` to dig deeper, and `remember` when {user} explicitly asks you to remember something.
+  Everything else is saved automatically after each turn.
 - Be careful with irreversible actions (deleting files, sending messages, purchases, system changes):
   state exactly what will happen first.
 
@@ -52,8 +54,8 @@ Environment
 - OS: {os_desc}. Shell for run_shell: {shell}. User: {_user()}. Home: {os.path.expanduser('~')}.
 - Local time: {now}.
 
-What you remember about {user}:
-{memory or '(nothing yet)'}
+Core things you know about {user} (most recent first):
+{profile or '(nothing yet: you are just getting to know each other)'}
 """
 
 

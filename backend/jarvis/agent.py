@@ -13,10 +13,14 @@ from typing import Awaitable, Callable
 import numpy as np
 
 from . import config, llm, persona, tools
+from . import memory as gm
 from .audio import Mic, Player
 from .speech import STT, TTS
 
 YES = re.compile(r"^\W*(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|confirm(ed)?|approved?|proceed|please do)\b", re.I)
+BACKCHANNEL = set("""mm mhm mmhm hmm uh um huh yeah yep yes yup ok okay right sure cool nice wow oh ah
+uh-huh aha great alright got it i see true exactly totally indeed""".split())
+INTERRUPT_WORDS = re.compile(r"\b(stop|wait|hold on|hang on|jarvis|no no|cancel|enough|pause|shut up|excuse me|actually)\b", re.I)
 NO = re.compile(r"^\W*(no|nope|don'?t|stop|cancel|deny|negative|abort|wait)\b", re.I)
 
 
@@ -51,7 +55,20 @@ class Session:
         self.provider: llm.Provider = llm.make_provider(self.settings)
         self.tool_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="tools")
         self.runtime = tools.ToolRuntime(self.settings)
-        self.mic = Mic(self.settings, self._on_mic_level, self._on_utterance)
+        self.mic = Mic(self.settings, self._on_mic_level, self._on_utterance, self._on_barge)
+        self._now_speaking = ""
+        self._mem_q: queue.Queue = queue.Queue()
+        try:
+            self.memory: gm.GraphMemory | None = gm.GraphMemory()
+            self.memory.ensure_user(self.settings.get("user_name") or "")
+            self.memory.import_legacy()
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            self.memory = None
+            print(f"[jarvis] graph memory unavailable: {e}")
+        self.runtime.memory = self.memory
+        self.runtime.on_memory = self.emit
+        threading.Thread(target=self._memory_worker, daemon=True).start()
         self.player = Player(self.settings)
         self.task: asyncio.Task | None = None
         self.cancelled = False
@@ -93,6 +110,8 @@ class Session:
         old_llm = dict(self.settings["llm"])
         self.settings.clear()
         self.settings.update(config.save(new))
+        if self.memory:
+            self.memory.ensure_user(self.settings.get("user_name") or "")
         if self.settings["llm"] != old_llm or keys:
             self.provider = llm.make_provider(self.settings)
             self.emit({"type": "info", "text": "Model settings changed — starting a fresh conversation."})
@@ -151,28 +170,95 @@ class Session:
                 continue
             try:
                 audio, sr = TTS(self.settings).synthesize(text)
-                self._audio_q.put((gen, audio, sr))
+                self._audio_q.put((gen, audio, sr, text))
             except Exception as e:  # noqa: BLE001
                 self.emit({"type": "error", "text": f"Text-to-speech failed: {e}"})
 
     def _play_worker(self):
         while True:
-            gen, audio, sr = self._audio_q.get()
+            gen, audio, sr, text = self._audio_q.get()
             if gen != self._speech_gen:
                 continue
-            self.mic.muted = True
+            self.mic.speaking = True
+            self._now_speaking = text
             prev = self.state
             self.set_state("speaking")
             try:
-                self.player.play(audio, sr, lambda v: self.emit({"type": "level", "source": "tts", "value": round(v, 3)}))
+                self.player.play(audio, sr, self._on_tts_level)
             except Exception as e:  # noqa: BLE001
                 self.emit({"type": "error", "text": f"Audio playback failed: {e}"})
             finally:
+                self.mic.out_level = 0.0
                 if self._audio_q.empty() and self._speech_q.empty():
-                    self.mic.muted = False
+                    self.mic.speaking = False
                     busy = self.task and not self.task.done()
                     self.set_state(prev if busy and prev != "speaking" else
                                    ("listening" if self.mic.mode == "handsfree" else "idle"))
+
+    def _on_tts_level(self, v: float):
+        self.mic.out_level = self.player.current_rms
+        self.emit({"type": "level", "source": "tts", "value": round(v, 3)})
+
+    # ------------------------------------------------------------------ barge-in
+    def _on_barge(self, audio: np.ndarray) -> bool:
+        """Called by the mic when someone seems to talk over the assistant.
+        Returns True (and stops speaking) only for a real interruption."""
+        try:
+            text = STT(self.settings).transcribe(audio)
+        except Exception:  # noqa: BLE001
+            return False
+        ok, why = self.is_interruption(text, self._now_speaking)
+        self.emit({"type": "barge", "text": text, "accepted": ok, "reason": why})
+        if ok:
+            self.stop_speaking()
+            self.mic.speaking = False
+            self.set_state("listening")
+        return ok
+
+    @staticmethod
+    def is_interruption(text: str, speaking: str) -> tuple[bool, str]:
+        words = re.findall(r"[a-z']+", text.lower())
+        if not words:
+            return False, "no words (noise)"
+        if INTERRUPT_WORDS.search(text):
+            return True, "interrupt phrase"
+        # Our own voice leaking from the speakers: most words match what we're saying.
+        spoken = set(re.findall(r"[a-z']+", speaking.lower()))
+        if spoken and sum(w in spoken for w in words) / len(words) >= 0.6:
+            return False, "echo of my own voice"
+        if all(w in BACKCHANNEL for w in words):
+            return False, "backchannel"
+        if len(words) < 2:
+            return False, "too short"
+        return True, "speech"
+
+    # ------------------------------------------------------------------ memory
+    def _memory_worker(self):
+        while True:
+            user_text, reply = self._mem_q.get()
+            if not self.memory or not self.settings.get("memory", {}).get("auto_save", True):
+                continue
+            try:
+                self.emit({"type": "memory_saving"})
+                data = gm.extract(self.settings, self.memory, user_text, reply)
+                changed = self.memory.apply(data, f"USER: {user_text}\nASSISTANT: {reply[:1000]}")
+                self.emit({"type": "memory_update", **changed})
+            except Exception as e:  # noqa: BLE001
+                traceback.print_exc()
+                self.emit({"type": "memory_update", "nodes": [], "edges": [], "invalidated": [], "error": str(e)})
+
+    def _recall(self, text: str) -> str:
+        if not self.memory:
+            return text
+        try:
+            res = self.memory.search(text)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return text
+        self.emit({"type": "memory_search", "query": text, "nodes": res["nodes"], "edges": res["edges"]})
+        if not res["text"]:
+            return text
+        return f"{text}\n\n<memory>\nRelevant things you remember (from your knowledge graph):\n{res['text']}\n</memory>"
 
     # ------------------------------------------------------------------ conversation
     async def handle_user(self, text: str, voice: bool = False):
@@ -224,16 +310,19 @@ class Session:
     async def _run(self, text: str):
         p = self.provider
         mark = len(p.history)
-        p.add_user(text)
+        p.add_user(await asyncio.to_thread(self._recall, text))
+        replies: list[str] = []
         tool_specs = tools.specs_for(p.vision)
         max_steps = int(self.settings["agent"].get("max_steps", 40))
         try:
             for _ in range(max_steps):
                 self.set_state("thinking")
-                system = persona.system_prompt(self.settings, p.vision)
+                profile = self.memory.user_profile() if self.memory else ""
+                system = persona.system_prompt(self.settings, p.vision, profile)
                 step = await asyncio.to_thread(p.step, system, tool_specs)
                 if step.text.strip():
                     self.emit({"type": "assistant", "text": step.text.strip()})
+                    replies.append(step.text.strip())
                     self.speak(step.text)
                 if not step.tool_calls:
                     break
@@ -265,6 +354,8 @@ class Session:
             del p.history[mark:]   # drop the failed turn so the conversation stays valid
             self.emit({"type": "error", "text": f"{type(e).__name__}: {e}"})
             self.speak("Sorry, I ran into a problem talking to the model. The details are on screen.")
+        else:
+            self._mem_q.put((text, " ".join(replies)))
         finally:
             if self.state in ("thinking", "acting"):
                 self.set_state("listening" if self.mic.mode == "handsfree" else "idle")

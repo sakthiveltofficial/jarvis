@@ -96,8 +96,14 @@ SPECS = [
               "key": {"type": "string"}, "index": {"type": "integer"}, "script": {"type": "string"}},
              ["action"]),
     ToolSpec("wait", "Wait some seconds (for pages/apps to load).", {"seconds": {"type": "number"}}, ["seconds"]),
-    ToolSpec("remember", "Save a lasting fact about the user to long-term memory.",
+    ToolSpec("remember", "Save something to long-term graph memory right now (facts about the user, people, "
+             "plans, preferences, corrections). Conversations are also saved automatically; use this when the "
+             "user explicitly asks you to remember something.",
              {"fact": {"type": "string"}}, ["fact"]),
+    ToolSpec("memory_search", "Search your long-term knowledge graph about the user (people, projects, "
+             "preferences, past events). Use it whenever past context could help and it isn't already in "
+             "the <memory> block.",
+             {"query": {"type": "string"}}, ["query"]),
     ToolSpec("system_info", "CPU, memory, disk, battery and OS details.", {}, []),
 ]
 
@@ -168,6 +174,8 @@ def describe(name: str, args: dict) -> str:
 class ToolRuntime:
     def __init__(self, settings: dict):
         self.settings = settings
+        self.memory = None          # GraphMemory, set by the session
+        self.on_memory = None       # callback(event dict) for UI updates
         self._scale = 1.0          # screenshot px -> screen px
         self._pw = None
         self._ctx = None
@@ -352,9 +360,27 @@ class ToolRuntime:
         return ToolOutput(f"Waited {seconds}s")
 
     def t_remember(self, fact: str):
-        with open(config.MEMORY_FILE, "a", encoding="utf-8") as f:
-            f.write(f"- {fact.strip()}\n")
-        return ToolOutput("Saved to memory")
+        if self.memory is None:
+            return ToolOutput("Memory is unavailable", is_error=True)
+        from . import memory as gm
+        try:
+            data = gm.extract(self.settings, self.memory, f"Please remember: {fact}", "")
+        except Exception:  # noqa: BLE001 - fall back to a plain note
+            data = {}
+        if not data.get("facts"):
+            data = {"facts": [{"source": "USER", "relation": "noted", "target": "Notes", "fact": fact}]}
+        changed = self.memory.apply(data, f"remember: {fact}")
+        if self.on_memory:
+            self.on_memory({"type": "memory_update", **changed})
+        return ToolOutput(f"Saved to memory ({len(changed['edges'])} facts, {len(changed['nodes'])} entities)")
+
+    def t_memory_search(self, query: str):
+        if self.memory is None:
+            return ToolOutput("Memory is unavailable", is_error=True)
+        res = self.memory.search(query)
+        if self.on_memory:
+            self.on_memory({"type": "memory_search", "query": query, "nodes": res["nodes"], "edges": res["edges"]})
+        return ToolOutput(res["text"] or "Nothing relevant in memory.")
 
     def t_system_info(self):
         import psutil

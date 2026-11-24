@@ -68,6 +68,12 @@ DEFAULTS = {
         "output_device": None,
         "vad_threshold": 2.5,          # speech = RMS above noise floor * this
         "silence_ms": 900,             # end of utterance after this much silence
+        "barge_in": True,              # keep listening while speaking; real speech interrupts
+        "barge_check_ms": 900,         # how much speech to hear before checking it's a real interruption
+        "echo_gain": 0.6,              # raise if Jarvis interrupts itself through your speakers
+    },
+    "memory": {
+        "auto_save": True,             # extract and save knowledge after every turn
     },
     "agent": {
         # always: confirm every action that changes something

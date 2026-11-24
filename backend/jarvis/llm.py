@@ -178,3 +178,34 @@ class OpenAICompatProvider(Provider):
 def make_provider(settings: dict) -> Provider:
     kind = settings["llm"].get("kind") or config.LLM_PRESETS.get(settings["llm"].get("provider"), {}).get("kind", "openai")
     return AnthropicProvider(settings) if kind == "anthropic" else OpenAICompatProvider(settings)
+
+
+def complete(settings: dict, system: str, prompt: str, max_tokens: int = 1500) -> str:
+    """One-shot text completion with the configured provider (used for memory extraction)."""
+    llm = settings["llm"]
+    kind = llm.get("kind") or config.LLM_PRESETS.get(llm.get("provider"), {}).get("kind", "openai")
+    if kind == "anthropic":
+        import anthropic
+        kw = {"api_key": config.api_key(settings, "anthropic") or None}
+        if llm.get("base_url"):
+            kw["base_url"] = llm["base_url"]
+        client = anthropic.Anthropic(**kw)
+        model = llm.get("model") or "claude-opus-5-5"
+        params = dict(model=model, max_tokens=max_tokens, system=system,
+                      messages=[{"role": "user", "content": prompt}])
+        if llm.get("effort"):
+            params["output_config"] = {"effort": "low"}
+        if model in _FALLBACK_MODELS:
+            resp = client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **params)
+        else:
+            resp = client.messages.create(**params)
+        if resp.stop_reason == "refusal":
+            return "{}"
+        return "".join(b.text for b in resp.content if b.type == "text")
+    from openai import OpenAI
+    key = config.api_key(settings, llm.get("provider", "custom")) or "not-needed"
+    client = OpenAI(api_key=key, base_url=llm.get("base_url") or None)
+    resp = client.chat.completions.create(model=llm.get("model"), temperature=0, max_tokens=max_tokens,
+                                          messages=[{"role": "system", "content": system},
+                                                    {"role": "user", "content": prompt}])
+    return resp.choices[0].message.content or ""

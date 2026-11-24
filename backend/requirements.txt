@@ -12,6 +12,8 @@ kokoro-onnx>=0.4           # local text-to-speech (higher quality, optional)
 sounddevice>=0.5
 soundfile>=0.12
 numpy>=1.26
+# long-term graph memory (embedded graph DB, maintained fork of Kuzu)
+real_ladybug>=0.15
 # computer & browser use
 pyautogui>=0.9.54
 mss>=9.0
