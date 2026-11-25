@@ -246,6 +246,15 @@
       </div>
       <label class="check"><input type="checkbox" id="beh-speak" /> Speak replies aloud</label>
       <label class="check"><input type="checkbox" id="beh-headless" /> Hide the automation browser window</label>
+      <h3>Look</h3>
+      <label class="check"><input type="checkbox" id="ui-orb" /> Animated particle orb that reacts to my voice and mood (off = simple glow)</label>
+      <label>Orb quality
+        <select id="ui-orb-q">
+          <option value="auto">Auto (lighter on battery or slower graphics)</option>
+          <option value="high">High (more particles)</option>
+          <option value="low">Low power</option>
+        </select>
+      </label>
     </div>
 
     <div class="tab hidden" id="tab-memory">
@@ -363,6 +372,7 @@
   </aside>
 
   <script src="graph.js"></script>
+  <script src="orb.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

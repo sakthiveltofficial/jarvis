@@ -33,6 +33,7 @@ const send = (obj) => ws && ws.readyState === 1 && ws.send(JSON.stringify(obj));
 
 // ------------------------------------------------------------------ events
 function onEvent(ev) {
+  orbEvent(ev);
   switch (ev.type) {
     case "state": state = ev.state; setStatus(); break;
     case "level": targetLevel = ev.value; break;
@@ -275,6 +276,7 @@ function draw(now) {
   const t = (now - t0) / 1000;
   level += (targetLevel - level) * 0.18;
   targetLevel *= 0.93;
+  if (orb3d) { drawWave(t); requestAnimationFrame(draw); return; }   // the particle orb draws itself
   const target = PALETTE[state] || PALETTE.idle;
   pal = pal.map((c, j) => c.map((v, i) => v + (target[j][i] - v) * 0.04));
   const busy = state === "thinking" || state === "acting" || state === "transcribing";
@@ -333,6 +335,40 @@ function draw(now) {
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
+
+// ------------------------------------------------------------------ particle orb (orb.js; falls back to the glow above)
+let orb3d = null, orbStarting = false, orbFailed = false;
+const curTheme = () => (document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+async function applyOrb() {
+  const ui = settings?.ui || {};
+  const want = ui.orb !== false && !orbFailed && !!window.JarvisOrb;
+  if (want && !orb3d && !orbStarting) {
+    orbStarting = true;
+    try { orb3d = await window.JarvisOrb.start($("stage"), { quality: ui.orb_quality, theme: curTheme() }); }
+    catch (e) { console.warn("[orb]", e); orb3d = null; }
+    orbStarting = false;
+    if (!orb3d) { orbFailed = true; return; }          // no WebGL: keep the glow
+    orb3d.setState(state);
+    if (settings?.ui?.orb === false) { orb3d.destroy(); orb3d = null; }   // turned off while it was loading
+  } else if (!want && orb3d) {
+    orb3d.destroy(); orb3d = null;
+  }
+  if (orb3d) orb3d.setQuality(ui.orb_quality || "auto");
+  $("orb").classList.toggle("hidden", !!orb3d);
+}
+function orbEvent(ev) {
+  if (!orb3d || ev.agent) return;
+  switch (ev.type) {
+    case "state": orb3d.setState(ev.state); break;
+    case "level": orb3d.level(ev.source, ev.value); break;
+    case "mood": orb3d.userMood(ev.mood); break;
+    case "ai_mood": orb3d.aiMood(ev.mood); break;
+    case "tool_start": orb3d.task(ev.tool); break;
+    case "tool_end": if (!ev.ok) orb3d.flash(); break;
+    case "error": orb3d.flash(); break;
+    case "memory_search": orb3d.task("memory_search", 2.0); break;
+  }
+}
 
 // voice tile: thin layered sine waves that follow the audio level
 const wv = $("wave"), wx = wv.getContext("2d");
@@ -395,6 +431,7 @@ function renderLabels() {
 const toggleTheme = () => {
   const dark = document.documentElement.dataset.theme !== "dark";
   document.documentElement.dataset.theme = dark ? "dark" : "light";
+  if (orb3d) orb3d.setTheme(dark ? "dark" : "light");
   try { localStorage.setItem("jarvis-theme", dark ? "dark" : "light"); } catch (_) {}
 };
 try { const th = localStorage.getItem("jarvis-theme"); if (th) document.documentElement.dataset.theme = th; } catch (_) {}
@@ -426,6 +463,7 @@ async function loadSettings() {
   const r = await (await fetch(API + "/api/settings")).json();
   settings = r.settings; presets = r.presets;
   renderLabels();
+  applyOrb();
 }
 
 async function openSettings() {
@@ -460,6 +498,7 @@ async function openSettings() {
   $("beh-confirm").value = s.agent.confirm_mode; $("beh-steps").value = s.agent.max_steps;
   $("beh-silence").value = s.audio.silence_ms; $("beh-speak").checked = s.agent.speak_replies;
   $("beh-headless").checked = s.agent.headless_browser;
+  $("ui-orb").checked = s.ui?.orb !== false; $("ui-orb-q").value = s.ui?.orb_quality || "auto";
   $("mem-auto").checked = s.memory?.auto_save !== false;
   $("barge-on").checked = s.audio.barge_in !== false;
   $("barge-echo").value = s.audio.echo_gain ?? 0.6;
@@ -514,6 +553,7 @@ function collect() {
     audio: { input_device: dev($("audio-in").value), output_device: dev($("audio-out").value), silence_ms: Number($("beh-silence").value || 900),
              barge_in: $("barge-on").checked, echo_gain: Number($("barge-echo").value || 0.6), barge_check_ms: Number($("barge-ms").value || 900) },
     memory: { auto_save: $("mem-auto").checked },
+    ui: { orb: $("ui-orb").checked, orb_quality: $("ui-orb-q").value },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
     voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), follow_up_s: Number($("pv-follow").value || 10),
