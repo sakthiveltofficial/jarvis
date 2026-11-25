@@ -122,6 +122,8 @@ class STT:
     @classmethod
     def preload(cls, settings: dict):
         """Warm the local model in the background so the first utterance is fast."""
+        if os.environ.get("JARVIS_NO_PRELOAD"):      # tests/CI: no 0.5 GB download racing interpreter exit
+            return
         if settings["stt"].get("provider") == "local_whisper":
             threading.Thread(target=lambda: cls(settings)._local_whisper(np.zeros(SR // 2, np.float32)),
                              daemon=True).start()

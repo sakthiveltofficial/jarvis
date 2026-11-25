@@ -27,6 +27,7 @@ jobs:
         working-directory: backend
         env:
           JARVIS_HOME: ${{ runner.temp }}/jarvis-home
+          JARVIS_NO_PRELOAD: "1"
         run: python -m unittest discover -s tests -v
 
   ui:
