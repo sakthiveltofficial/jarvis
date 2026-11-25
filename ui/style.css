@@ -325,3 +325,7 @@ textarea { font: 12px/1.45 ui-monospace, "Cascadia Code", Menlo, Consolas, monos
 .sources .src span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sources .src small { color: var(--muted); white-space: nowrap; flex: none; }
 .sources .lbl { font-size: 11px; color: inherit; opacity: .75; align-self: center; flex-basis: 100%; }
+/* v0.10: Presence tab */
+#tab-presence .row-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 4px; }
+pre.report { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; max-height: 220px; overflow: auto; margin: 8px 0 0; }
+pre.report:empty { display: none; }

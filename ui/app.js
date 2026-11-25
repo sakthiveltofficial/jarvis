@@ -86,7 +86,7 @@ function setStatus() {
 function addMsg(kind, text, proactive) {
   const d = document.createElement("div");
   d.className = "msg " + kind + (proactive ? " proactive" : "");
-  if (proactive) d.title = { reminder: "Reminder", offer: "Said on my own", clap: "You clapped", background: "Background task", teach: "Teach mode", skill: "New skill" }[proactive] || proactive;
+  if (proactive) d.title = { reminder: "Reminder", offer: "Said on my own", clap: "You clapped", background: "Background task", teach: "Teach mode", skill: "New skill", presence: "At the desk", health: "Health nudge", report: "Weekly life report" }[proactive] || proactive;
   d.textContent = text;
   if (kind === "user" || kind === "assistant") $("convo-count").textContent = `${++msgCount} messages`;
   $("transcript").appendChild(d);
@@ -459,6 +459,7 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
   if (b.dataset.tab === "memory") loadConsolidation();
   if (b.dataset.tab === "files") loadFiles();
   if (b.dataset.tab === "desktop") loadGestureStatus();
+  if (b.dataset.tab === "presence") loadPresence();
 });
 
 function opt(sel, items, value) {
@@ -520,6 +521,70 @@ $("hud-test").onclick = async () => {
   setTimeout(() => ($("hud-status").textContent = ""), 5000);
 };
 
+// ------------------------------------------------------------------ v0.10: presence, health nudges, life report
+let prTimer = 0;
+async function loadPresence() {
+  clearTimeout(prTimer);
+  if ($("settings").classList.contains("hidden") || $("tab-presence").classList.contains("hidden")) return;
+  try {
+    const r = await (await fetch(API + "/api/presence")).json();
+    const p = r.presence, h = r.health;
+    const names = { off: "Camera off.", loading: "Starting the face tracker…", downloading: "Downloading the face models (37 MB)…",
+      running: "Watching the desk.", error: "Problem: " + p.error };
+    let t = names[p.state] || p.state;
+    if (p.state === "running") {
+      const seen = p.seen || [];
+      t += seen.includes("owner") ? " I can see you ✓" : seen.includes("stranger") ? " I see someone I don't know." :
+        seen.includes("face") ? " I can see a face." : " Nobody in view.";
+      if (p.posture) t += p.posture.bad ? ` Posture: ${p.posture.reason}.` : " Posture: good.";
+    }
+    t += p.enrolled ? ` Face learned${p.enrolled_at ? " " + p.enrolled_at.slice(0, 10) : ""}.` : " I haven't learned your face yet, so anyone counts as you.";
+    if (!p.has_baseline) t += " No posture baseline yet.";
+    $("pr-status").textContent = t;
+    const e = p.enroll || {};
+    if (e.message && !e.done) $("pr-enroll-msg").textContent = `${e.message} ${Math.round((e.progress || 0) * 100)}%`;
+    else if (e.message && e.done) { (e.posture_only ? $("he-cal-msg") : $("pr-enroll-msg")).textContent = e.message; }
+    $("he-status").textContent = `Screen time since your last break: ${h.screen_min} min · water today: ${h.water_today} glass${h.water_today === 1 ? "" : "es"}. Tell me “I drank some water” and I'll count it.`;
+    const last = (r.life.reports || [])[0];
+    if (last && !$("lf-msg").textContent) $("lf-msg").textContent = `Last report: ${last.week}`;
+  } catch (_) { $("pr-status").textContent = ""; }
+  prTimer = setTimeout(loadPresence, 1500);
+}
+async function presenceEnroll(postureOnly) {
+  const msg = postureOnly ? $("he-cal-msg") : $("pr-enroll-msg");
+  msg.textContent = postureOnly ? "Sit up straight and look at the screen…" : "Look at the camera and turn your head a little…";
+  try {
+    await fetch(API + "/api/presence/enroll", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seconds: postureOnly ? 5 : 8, posture_only: postureOnly }) });
+  } catch (e) { msg.textContent = "Couldn't start: " + e; }
+  loadPresence();
+}
+$("pr-enroll").onclick = () => presenceEnroll(false);
+$("he-calibrate").onclick = () => presenceEnroll(true);
+$("pr-forget").onclick = async () => {
+  await fetch(API + "/api/presence/face", { method: "DELETE" });
+  $("pr-enroll-msg").textContent = "Forgotten. Your face data is deleted from this PC.";
+  loadPresence();
+};
+$("lf-now").onclick = async () => {
+  $("lf-msg").textContent = "Putting your week together…";
+  try {
+    const r = await (await fetch(API + "/api/life/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ speak: true }) })).json();
+    $("lf-last").textContent = r.text || "";
+    $("lf-msg").textContent = `Saved to ${r.path}`;
+  } catch (e) { $("lf-msg").textContent = "Couldn't make the report: " + e; }
+};
+$("lf-forget").onclick = async () => {
+  if ($("lf-forget").dataset.armed !== "1") {
+    $("lf-forget").dataset.armed = "1"; $("lf-forget").textContent = "Click again to delete";
+    setTimeout(() => { $("lf-forget").dataset.armed = ""; $("lf-forget").textContent = "Delete my life log"; }, 4000);
+    return;
+  }
+  await fetch(API + "/api/life", { method: "DELETE" });
+  $("lf-forget").dataset.armed = ""; $("lf-forget").textContent = "Delete my life log";
+  $("lf-msg").textContent = "Life log deleted.";
+};
+
 async function openSettings() {
   await loadSettings();
   const s = settings, l = s.llm;
@@ -565,6 +630,19 @@ async function openSettings() {
   $("gs-on").checked = !!gs.enabled; $("gs-cam").value = gs.camera ?? 0; $("gs-sens").value = gs.sensitivity ?? 0.5;
   for (const k of ["palm", "fist", "windows", "orb"]) $("gs-" + k).checked = gs[k] !== false;
   loadGestureStatus();
+  const pr = s.presence || {}, he = s.health || {}, lf = s.life || {};
+  $("pr-on").checked = !!pr.enabled; $("pr-greet").checked = pr.greet !== false; $("pr-greet-min").value = pr.greet_after_min ?? 20;
+  $("pr-lock").checked = pr.lock_on_leave !== false; $("pr-lock-s").value = pr.lock_after_s ?? 45;
+  $("pr-stranger").checked = pr.stranger_alert !== false; $("pr-stranger-lock").checked = pr.stranger_lock !== false;
+  $("pr-photo").checked = !!pr.visitor_photo; $("pr-thr").value = pr.match_threshold ?? 0.38;
+  $("he-on").checked = he.enabled !== false; $("he-posture").checked = he.posture !== false; $("he-posture-min").value = he.posture_min ?? 3;
+  $("he-posture-s").value = he.posture_strictness ?? 0.5; $("he-eyes").checked = he.eyes !== false; $("he-eyes-min").value = he.eyes_min ?? 20;
+  $("he-water").checked = he.water !== false; $("he-water-min").value = he.water_min ?? 60; $("he-sleep").checked = he.sleep !== false;
+  $("he-bedtime").value = he.bedtime || "23:30"; $("he-sleep-h").value = he.sleep_goal_h ?? 7.5; $("he-gap").value = he.min_gap_min ?? 15;
+  $("lf-track").checked = lf.track !== false; $("lf-report").checked = lf.report !== false; $("lf-day").value = lf.report_day || "sun";
+  $("lf-time").value = lf.report_time || "19:00"; $("lf-speak").checked = lf.speak !== false; $("lf-keep").value = lf.keep_days ?? 120;
+  $("lf-model").value = lf.model || "";
+  loadPresence();
   $("mem-auto").checked = s.memory?.auto_save !== false;
   $("mem-cons").checked = s.memory?.consolidate !== false; $("mem-cons-time").value = s.memory?.consolidate_time || "03:00";
   $("mem-half").value = s.memory?.half_life_days ?? 120; $("mem-keep").value = s.memory?.keep_history_days ?? 730;
@@ -645,6 +723,15 @@ function collect() {
     hud: { enabled: $("hud-on").checked, show: $("hud-show").value, stats: $("hud-stats").checked, hand: $("hud-hand").checked },
     gestures: { enabled: $("gs-on").checked, camera: Number($("gs-cam").value || 0), sensitivity: Number($("gs-sens").value || 0.5),
                 palm: $("gs-palm").checked, fist: $("gs-fist").checked, windows: $("gs-windows").checked, orb: $("gs-orb").checked },
+    presence: { enabled: $("pr-on").checked, greet: $("pr-greet").checked, greet_after_min: Number($("pr-greet-min").value || 20),
+                lock_on_leave: $("pr-lock").checked, lock_after_s: Number($("pr-lock-s").value || 45), stranger_alert: $("pr-stranger").checked,
+                stranger_lock: $("pr-stranger-lock").checked, visitor_photo: $("pr-photo").checked, match_threshold: Number($("pr-thr").value || 0.38) },
+    health: { enabled: $("he-on").checked, posture: $("he-posture").checked, posture_min: Number($("he-posture-min").value || 3),
+              posture_strictness: Number($("he-posture-s").value || 0.5), eyes: $("he-eyes").checked, eyes_min: Number($("he-eyes-min").value || 20),
+              water: $("he-water").checked, water_min: Number($("he-water-min").value || 60), sleep: $("he-sleep").checked,
+              bedtime: $("he-bedtime").value || "23:30", sleep_goal_h: Number($("he-sleep-h").value || 7.5), min_gap_min: Number($("he-gap").value || 15) },
+    life: { track: $("lf-track").checked, report: $("lf-report").checked, report_day: $("lf-day").value, report_time: $("lf-time").value || "19:00",
+            speak: $("lf-speak").checked, keep_days: Number($("lf-keep").value || 120), model: $("lf-model").value.trim() },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
     voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), follow_up_s: Number($("pv-follow").value || 10),
@@ -874,6 +961,7 @@ $("btn-save").onclick = async () => {
   loadAgenda();
   if (!$("tab-connections").classList.contains("hidden")) setTimeout(loadConnections, 1500);
   if (!$("tab-desktop").classList.contains("hidden")) setTimeout(loadGestureStatus, 800);
+  if (!$("tab-presence").classList.contains("hidden")) setTimeout(loadPresence, 800);
   $("save-msg").textContent = "Saved ✓";
   setTimeout(() => ($("save-msg").textContent = ""), 2500);
 };

@@ -133,6 +133,7 @@
       <button data-tab="files">Files</button>
       <button data-tab="proactive">Proactive</button>
       <button data-tab="desktop">Desktop</button>
+      <button data-tab="presence">Presence</button>
       <button data-tab="skills">Skills</button>
       <button data-tab="connections">Connections</button>
     </nav>
@@ -454,7 +455,7 @@
       <p class="hint">Control me with your webcam, no special hardware. The camera picture never leaves this PC and nothing is recorded: each frame becomes 21 hand points and is thrown away. The first start downloads a small hand-tracking model (7.5 MB).</p>
       <label class="check"><input type="checkbox" id="gs-on" /> Use hand gestures (turns the webcam on)</label>
       <div class="row2">
-        <label>Camera <small>(0 = default webcam)</small><input id="gs-cam" type="number" min="0" max="9" step="1" /></label>
+        <label>Camera <small>(0 = default webcam; Presence uses it too)</small><input id="gs-cam" type="number" min="0" max="9" step="1" /></label>
         <label>Sensitivity <small>(higher = smaller moves count)</small><input id="gs-sens" type="number" step="0.05" min="0" max="1" /></label>
       </div>
       <label class="check"><input type="checkbox" id="gs-palm" /> ✋ Open palm (hold): wake me, or stop me talking. With the mic off, I listen while your palm is up</label>
@@ -462,6 +463,76 @@
       <label class="check"><input type="checkbox" id="gs-windows" /> ⟷ Swipe left or right: switch windows · swipe up: maximise · swipe down: minimise</label>
       <label class="check"><input type="checkbox" id="gs-orb" /> 🤏 Pinch and move: spin the orb · quick pinch: show or hide my window</label>
       <p id="gs-status" class="hint"></p>
+    </div>
+
+    <div class="tab hidden" id="tab-presence">
+      <h3>At the desk</h3>
+      <p class="hint">I greet you when you sit down, lock the PC when you walk away, and tell you when someone else sits down. I use the same webcam stream as hand gestures (camera number under Desktop). Your face is kept only as a list of numbers in <code>~/.jarvis/presence</code> on this PC, never as a photo, and nothing about faces is ever sent anywhere. The first start downloads two small face models (37 MB).</p>
+      <label class="check"><input type="checkbox" id="pr-on" /> Know when I'm at the desk (turns the webcam on)</label>
+      <div class="row-actions">
+        <button class="pill" id="pr-enroll" type="button">Learn my face</button>
+        <button class="pill" id="pr-forget" type="button">Forget my face</button>
+        <span id="pr-enroll-msg" class="hint"></span>
+      </div>
+      <p id="pr-status" class="hint"></p>
+      <div class="row2">
+        <label class="check"><input type="checkbox" id="pr-greet" /> Greet me when I sit down</label>
+        <label>…after being away at least (minutes) <input id="pr-greet-min" type="number" min="1" max="600" /></label>
+      </div>
+      <div class="row2">
+        <label class="check"><input type="checkbox" id="pr-lock" /> Lock the PC when I walk away</label>
+        <label>…after (seconds) <input id="pr-lock-s" type="number" min="10" max="900" /></label>
+      </div>
+      <label class="check"><input type="checkbox" id="pr-stranger" /> Tell me (and my phone) when someone else sits down or looks over my shoulder</label>
+      <div class="row2">
+        <label class="check"><input type="checkbox" id="pr-stranger-lock" /> Lock the PC if they sit down while I'm away</label>
+        <label class="check"><input type="checkbox" id="pr-photo" /> Keep a photo of visitors (30 days, this PC only)</label>
+      </div>
+      <label>Face match strictness <small>(0.3 to 0.6, higher = stricter)</small><input id="pr-thr" type="number" step="0.02" min="0.25" max="0.7" /></label>
+
+      <h3>Health nudges</h3>
+      <label class="check"><input type="checkbox" id="he-on" /> Short spoken nudges for posture, eyes, water and sleep</label>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="he-posture" /> Posture <small>(needs “at the desk” on)</small></label>
+        <label>after slouching for (min) <input id="he-posture-min" type="number" min="1" max="30" /></label>
+        <label>Strictness <small>(0 to 1)</small><input id="he-posture-s" type="number" step="0.1" min="0" max="1" /></label>
+      </div>
+      <div class="row-actions"><button class="pill" id="he-calibrate" type="button">Sit up straight and calibrate</button> <span id="he-cal-msg" class="hint"></span></div>
+      <div class="row2">
+        <label class="check"><input type="checkbox" id="he-eyes" /> Eye breaks (20-20-20)</label>
+        <label>every (minutes of screen time) <input id="he-eyes-min" type="number" min="5" max="180" /></label>
+      </div>
+      <div class="row2">
+        <label class="check"><input type="checkbox" id="he-water" /> Water</label>
+        <label>every (minutes at the desk) <input id="he-water-min" type="number" min="10" max="300" /></label>
+      </div>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="he-sleep" /> Bedtime nudge</label>
+        <label>Bedtime <input id="he-bedtime" type="time" /></label>
+        <label>Sleep goal (hours) <input id="he-sleep-h" type="number" step="0.5" min="4" max="12" /></label>
+      </div>
+      <label>At most one nudge every (minutes) <input id="he-gap" type="number" min="5" max="240" /></label>
+      <p id="he-status" class="hint">Tell me “I drank some water” and I'll count it.</p>
+
+      <h3>Weekly life report</h3>
+      <p class="hint">Once a minute I note which app is in front (its name and a category like coding or meetings, never the window title), stored in <code>~/.jarvis/life.db</code> on this PC. Each week I read you a short report: where the time went, your goals and habits, water, posture and sleep. Set goals by asking, e.g. “I want to exercise 3 times a week” or “code at most 40 hours a week”.</p>
+      <label class="check"><input type="checkbox" id="lf-track" /> Keep a life log</label>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="lf-report" /> Weekly report on</label>
+        <label><select id="lf-day"><option value="sun">Sunday</option><option value="mon">Monday</option><option value="tue">Tuesday</option><option value="wed">Wednesday</option><option value="thu">Thursday</option><option value="fri">Friday</option><option value="sat">Saturday</option></select></label>
+        <label>at <input id="lf-time" type="time" /></label>
+      </div>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="lf-speak" /> Read it out loud</label>
+        <label>Keep the log (days) <input id="lf-keep" type="number" min="14" max="3650" /></label>
+        <label>Model for the report <input id="lf-model" placeholder="same as Brain" /></label>
+      </div>
+      <div class="row-actions">
+        <button class="pill" id="lf-now" type="button">Read my week now</button>
+        <button class="pill" id="lf-forget" type="button">Delete my life log</button>
+        <span id="lf-msg" class="hint"></span>
+      </div>
+      <pre id="lf-last" class="hint report"></pre>
     </div>
 
     <div class="tab hidden" id="tab-skills">

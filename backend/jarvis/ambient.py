@@ -206,6 +206,13 @@ class Ambient:
         return FALLBACK.get(kind, "Just checking in.").format(user=st.get("user_name") or "")
 
     def say(self, kind: str, idea: str):
+        wb = getattr(self.s, "wellbeing", None)
+        if kind == "welcome" and wb is not None and time.time() - wb.last_greet_at < 15 * 60:
+            return                              # Presence already greeted them at the desk
+        if kind in ("screen", "late") and wb is not None and (self.s.settings.get("health") or {}).get("enabled", True):
+            h = self.s.settings.get("health") or {}
+            if (kind == "screen" and h.get("eyes", True)) or (kind == "late" and h.get("sleep", True)):
+                return                          # the health nudges cover these
         line = self.phrase(kind, idea)
         self.s.offer(line, f"ambient mode ({kind}): {idea}")
 

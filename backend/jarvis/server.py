@@ -194,6 +194,64 @@ def gestures_status(check: bool = False):
     return st
 
 
+# --------------------------------------------------------------------------- v0.10: presence, health, life report
+@app.get("/api/presence")
+def presence_status(check: bool = False):
+    st = session.wellbeing.status()
+    if check:                 # can the face engine load here? (the release build smoke-tests this)
+        try:
+            import cv2
+            for name in ("FaceDetectorYN", "FaceRecognizerSF"):
+                getattr(cv2, name)
+            st["deps"] = "ok"
+        except Exception as e:  # noqa: BLE001
+            st["deps"] = f"{type(e).__name__}: {e}"
+    return st
+
+
+@app.post("/api/presence/enroll")
+def presence_enroll(body: dict | None = None):
+    """Learn the owner's face (and good-posture baseline) from ~8 seconds of camera. posture_only: just the baseline."""
+    body = body or {}
+    return session.wellbeing.presence.start_enroll(float(body.get("seconds") or 8),
+                                                   bool(body.get("posture_only")))
+
+
+@app.delete("/api/presence/face")
+def presence_forget():
+    session.wellbeing.presence.forget()
+    return {"ok": True}
+
+
+@app.get("/api/life/stats")
+def life_stats(days: int = 7):
+    import datetime as _dt
+    end = _dt.date.today() + _dt.timedelta(days=1)
+    return session.wellbeing.log.stats(end - _dt.timedelta(days=max(1, min(days, 120))), end,
+                                       (session.settings.get("health") or {}).get("bedtime") or "23:30")
+
+
+@app.get("/api/life/report")
+def life_report_last():
+    return {"last": session.wellbeing.last_report, "reports": session.wellbeing.reports()}
+
+
+@app.post("/api/life/report")
+async def life_report_now(body: dict | None = None):
+    """Make this week's report now and (by default) read it out loud."""
+    body = body or {}
+    rep = await asyncio.to_thread(session.wellbeing.report, body.get("week") or None)
+    if body.get("speak", True):
+        session.announce(rep["text"], "report")
+    return rep
+
+
+@app.delete("/api/life")
+def life_forget():
+    session.wellbeing.log.forget_all()
+    return {"ok": True}
+
+
 @app.post("/api/hud/test")
 def hud_test():
     """Show a sample pointer in the middle of the primary screen so you can see the HUD is working."""

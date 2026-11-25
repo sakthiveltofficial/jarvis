@@ -137,6 +137,32 @@ DEFAULTS = {
         "windows": True,               # swipes switch, maximise and minimise windows
         "orb": True,                   # pinch and move to spin the orb, quick pinch shows/hides my window
     },
+    "presence": {                      # face at the desk (see presence.py); shares the webcam with gestures
+        "enabled": False,              # off until you turn it on: it uses the camera
+        "greet": True,                 # greet me when I sit down (first time today, or after a while away)
+        "greet_after_min": 20,
+        "lock_on_leave": True,         # lock the PC when I walk away
+        "lock_after_s": 45,            # ...after no face and no keyboard/mouse for this long
+        "stranger_alert": True,        # tell me (and my phone) when someone else sits down
+        "stranger_lock": True,         # ...and lock the PC if I'm not there
+        "visitor_photo": False,        # keep a photo of unknown faces (30 days, this PC only)
+        "match_threshold": 0.38,       # face match strictness (higher = stricter)
+    },
+    "health": {                        # health nudges (see health.py)
+        "enabled": True,
+        "posture": True, "posture_min": 3, "posture_strictness": 0.5,   # posture needs Presence (camera) on
+        "eyes": True, "eyes_min": 20,  # 20-20-20 eye breaks
+        "water": True, "water_min": 60,
+        "sleep": True, "bedtime": "23:30", "sleep_goal_h": 7.5,
+        "min_gap_min": 15,             # at most one nudge every this many minutes (sleep excepted)
+    },
+    "life": {                          # life log + weekly life report (see lifelog.py)
+        "track": True,                 # note the app in front each minute (app name + category only, this PC only)
+        "report": True, "report_day": "sun", "report_time": "19:00",
+        "speak": True,                 # read it out loud in my voice
+        "keep_days": 120,
+        "model": "",                   # optional model for the report (same provider)
+    },
     "briefings": {
         "location": "",                # city for the weather; empty = guess from IP
         "morning": {"enabled": False, "time": "08:00", "weekdays_only": False},
