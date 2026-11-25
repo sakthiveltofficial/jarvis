@@ -16,7 +16,7 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from . import config, emotion, llm, nodes, persona, scheduler, skills, tools
+from . import config, emotion, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
 from .audio import Mic, Player
 from .awareness import Awareness
@@ -95,7 +95,8 @@ class Runner:
     def specs(self) -> list[tools.ToolSpec]:
         st = self.s.settings
         out = tools.specs_for(self.p.vision, main=not self.background, nodes=bool(st.get("nodes")),
-                              exclude=tools.GUI_TOOLS if self.background else None)
+                              exclude=tools.GUI_TOOLS if self.background else None,
+                              phones=bool((st.get("phones") or {}).get("devices")))
         return out + self.s.mcp.specs()
 
     async def call_tool(self, call: llm.ToolCall) -> tools.ToolOutput:
@@ -226,11 +227,14 @@ class Session:
         self.scheduler = scheduler.Scheduler(self.settings, self._on_schedule)
         self.node_server: nodes.NodeServer | None = None
         self._sync_node_server()
+        self.reply_to: str | None = None       # phone device id that should hear this turn's replies ("-" = nobody)
+        self.phones = phones.PhoneHub(self)
+        self._sync_phone_hub()
         self.meta_tools = {
             "schedule": self._t_schedule, "list_schedules": self._t_list_schedules,
             "cancel_schedule": self._t_cancel_schedule, "use_skill": self._t_use_skill,
             "save_skill": self._t_save_skill, "teach": self._t_teach, "background_task": self._t_background,
-            "remote_pc": self._t_remote_pc,
+            "remote_pc": self._t_remote_pc, "phone": self.phones.tool,
         }
         threading.Thread(target=self._synth_worker, daemon=True).start()
         threading.Thread(target=self._play_worker, daemon=True).start()
@@ -298,6 +302,7 @@ class Session:
         self.runtime.vision = self.provider.vision
         self.mcp.reload(self.settings)
         self.scheduler.sync_briefings()
+        self._sync_phone_hub()
         self._sync_node_server()
         self.emit({"type": "agenda"})
         STT.preload(self.settings)
@@ -429,6 +434,14 @@ class Session:
     def speak(self, text: str):
         if not self.settings["agent"].get("speak_replies", True) or self.settings["tts"].get("provider") == "none":
             return
+        if self.reply_to == "-":
+            return
+        if self.reply_to and self.phones.online(self.reply_to):
+            device = self.reply_to
+            gen = self._speech_gen
+            for s in sentences(speakable(text)):
+                self.phones.pool.submit(self._speak_on_phone, device, s, gen)
+            return
         style = None
         if self.mood.get("mood", "neutral") != "neutral" and time.time() - self.mood.get("at", 0) < 300 \
                 and self.settings.get("voice", {}).get("emotion", True):
@@ -439,6 +452,71 @@ class Session:
     def stop_speaking(self):
         self._speech_gen += 1
         self.player.stop()
+        self.phones.stop_audio()
+
+    def _speak_on_phone(self, device: str, text: str, gen: int):
+        if gen != self._speech_gen:
+            return
+        try:
+            from .speech import to_wav_bytes
+            audio, sr = TTS(self.settings).synthesize(text)
+            if gen == self._speech_gen:
+                self.phones.send_audio(device, to_wav_bytes(audio, sr), text)
+        except Exception as e:  # noqa: BLE001
+            self.emit({"type": "error", "text": f"Text-to-speech failed: {e}"})
+
+    # ------------------------------------------------------------------ phones
+    def phone_utterance(self, wav: bytes, origin: str):
+        """Push-to-talk audio recorded on a phone (16 kHz WAV)."""
+        from .speech import SR, from_wav_bytes
+        try:
+            audio, sr = from_wav_bytes(wav)
+            if sr != SR:
+                n = int(len(audio) * SR / sr)
+                audio = np.interp(np.linspace(0, len(audio), n, endpoint=False), np.arange(len(audio)), audio).astype(np.float32)
+        except Exception as e:  # noqa: BLE001
+            self.emit({"type": "error", "text": f"Couldn't read the phone's audio: {e}"})
+            return
+        self.set_state("transcribing")
+        try:
+            text = (STT(self.settings).transcribe(audio) or "").strip()
+        except Exception as e:  # noqa: BLE001
+            self.emit({"type": "error", "text": f"Speech recognition failed: {e}"})
+            self.set_state(self._idle_state())
+            return
+        if not text or re.fullmatch(r"[\W_]*(thank you\.?|you)?[\W_]*", text, re.I):
+            self.emit({"type": "info", "text": "I didn't catch that."})
+            self.set_state(self._idle_state())
+            return
+        mood = None
+        if self.settings.get("voice", {}).get("emotion", True):
+            try:
+                mood = emotion.analyze(audio, text)
+                self.mood = {**mood, "at": time.time()}
+                self.emit({"type": "mood", **mood})
+            except Exception:  # noqa: BLE001
+                pass
+        asyncio.run_coroutine_threadsafe(self.handle_user(text, voice=True, mood=mood, origin=origin), self.loop)
+
+    def on_phone_notification(self, phone: str, n: dict):
+        app, title, text = n.get("app", ""), n.get("title", ""), (n.get("text") or "")[:300]
+        self.context_notes.append(f"New notification on {phone}: {app}: {title}: {text} (key={n.get('key')})")
+        self.context_notes[:] = self.context_notes[-10:]
+        self.emit({"type": "info", "text": f"📱 {app}: {title} — {text[:120]}"})
+
+    def _sync_phone_hub(self):
+        cfg = self.settings.get("phones") or {}
+        want = int(cfg.get("port") or phones.DEFAULT_PORT)
+        if cfg.get("enabled"):
+            if self.phones.running() and self.phones.port != want:
+                self.phones.stop()
+            if not self.phones.running():
+                try:
+                    self.phones.start()
+                except Exception as e:  # noqa: BLE001
+                    self.emit({"type": "error", "text": f"Couldn't start the phone link: {e}"})
+        elif self.phones.running():
+            self.phones.stop()
 
     def _synth_worker(self):
         while True:
@@ -546,6 +624,7 @@ class Session:
             "schedules": "\n".join(f"- [{j['id']}] {j['title']} ({j['kind']}, {j['when']}, next {j.get('next_run', '')[:16]})"
                                    for j in self.scheduler.upcoming(48)[:8]),
             "pcs": "\n".join(f"- {p.get('name')}" for p in self.settings.get("nodes") or []),
+            "phones": self.phones.prompt_lines(),
             "apps": ", ".join(f"{s['name']} ({len(s['tools'])} tools)" for s in self.mcp.status() if s["state"] == "ready"),
             "background": "\n".join(f"- [{b['id']}] {b['goal'][:80]} — {b['status']}" for b in self.background.values()
                                     if b["status"] == "running"),
@@ -555,7 +634,8 @@ class Session:
         return persona.system_prompt(self.settings, vision, profile, ex)
 
     # ------------------------------------------------------------------ conversation
-    async def handle_user(self, text: str, voice: bool = False, mood: dict | None = None):
+    async def handle_user(self, text: str, voice: bool = False, mood: dict | None = None, origin: str | None = None):
+        """origin: None = this PC; a phone device id = reply through that phone; "-" = a phone that wants no audio."""
         # A spoken yes/no answers a pending confirmation.
         if self.pending and voice:
             fid = next(iter(self.pending))
@@ -573,6 +653,7 @@ class Session:
         if self.task and not self.task.done():
             await self.interrupt()
         self.main.cancelled = False
+        self.reply_to = origin
         self.task = asyncio.create_task(self._run(text, mood))
 
     async def interrupt(self):
@@ -624,7 +705,12 @@ class Session:
 
     async def _run(self, text: str, mood: dict | None = None, auto: bool = False):
         prompt = self._decorate(await asyncio.to_thread(self._recall, text), mood)
-        replies, ok = await self.main.run(prompt)
+        if self.reply_to and not auto:
+            prompt = "<context>The user is talking to you from their phone, away from this PC's screen.</context>\n" + prompt
+        try:
+            replies, ok = await self.main.run(prompt)
+        finally:
+            self.reply_to = None
         if ok and not auto:
             self._mem_q.put((text, " ".join(replies)))
         if self.state in ("thinking", "acting"):
@@ -936,4 +1022,5 @@ class Session:
         self.mcp.close()
         if self.node_server:
             self.node_server.stop()
+        self.phones.stop()
         self.tool_pool.submit(self.runtime.shutdown)

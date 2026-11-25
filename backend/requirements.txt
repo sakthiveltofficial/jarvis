@@ -22,3 +22,6 @@ pillow>=10.0
 pyperclip>=1.9
 psutil>=5.9
 playwright>=1.48
+# phone companion (pairing QR, encrypted link)
+qrcode>=7.4
+cryptography>=42

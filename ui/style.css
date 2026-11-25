@@ -294,3 +294,12 @@ textarea { font: 12px/1.45 ui-monospace, "Cascadia Code", Menlo, Consolas, monos
   .agenda { grid-template-columns: 1fr; }
   .row2, .row3 { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------- phone pairing */
+.phone-qr { display: flex; gap: 16px; align-items: center; margin-top: 12px; padding: 14px; border-radius: 18px;
+  background: var(--g-convo); color: #fff; }
+.phone-qr .hint { color: rgba(255, 255, 255, .85); }
+.phone-qr .pill { background: rgba(255, 255, 255, .22); border-color: rgba(255, 255, 255, .4); color: #fff; }
+.qr-box { width: 168px; height: 168px; flex: none; background: #fff; border-radius: 14px; padding: 8px; display: grid; place-items: center; color: #17191a; font-size: 12px; text-align: center; }
+.qr-box svg { width: 100%; height: 100%; stroke: none; fill: #17191a; }
+.qr-side { min-width: 0; }
