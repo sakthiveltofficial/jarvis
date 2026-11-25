@@ -80,6 +80,15 @@ SPECS = [
               "text": {"type": "string"},
               "keys": {"type": "array", "items": {"type": "string"}}},
              ["action"]),
+    ToolSpec("point",
+             "Point at something on screen for the user without clicking: the screen HUD draws an animated arrow and "
+             "a caption there (if the HUD is off, the mouse pointer moves there instead). Use it when teaching or "
+             "showing the user where something is (\"where's the export button?\", \"show me how to...\"): one point "
+             "per step, say what to do, and let them click. Coordinates are from the latest screenshot.",
+             {"x": {"type": "integer"}, "y": {"type": "integer"},
+              "label": {"type": "string", "description": "Short caption, e.g. 'Click Export'."},
+              "seconds": {"type": "number", "description": "How long to show it (default 8)."}},
+             ["x", "y"], vision_only=True),
     ToolSpec("open", "Open an application by name, a file/folder path, or a URL with the system default handler.",
              {"target": {"type": "string"}}, ["target"]),
     ToolSpec("list_windows", "List open windows / running GUI apps.", {}, []),
@@ -210,7 +219,7 @@ SPECS = [
 
 NODE_TOOLS = {"run_shell", "screenshot", "mouse", "keyboard", "open", "list_windows", "read_file", "write_file",
               "list_dir", "clipboard", "wait", "system_info", "weather"}
-GUI_TOOLS = {"mouse", "keyboard", "screenshot", "teach"}
+GUI_TOOLS = {"mouse", "keyboard", "screenshot", "teach", "point"}
 
 
 def specs_for(vision: bool, main: bool = True, nodes: bool = False, exclude: set | None = None,
@@ -316,6 +325,8 @@ def describe(name: str, args: dict) -> str:
         return f"{args.get('action')} ({args.get('x')}, {args.get('y')})"
     if name == "open":
         return args.get("target", "")
+    if name == "point":
+        return args.get("label") or f"({args.get('x')}, {args.get('y')})"
     if name == "remote_pc":
         return f"{args.get('pc')}: {args.get('tool')} " + describe(args.get("tool", ""), args.get("args") or {})
     if name == "phone":
@@ -350,6 +361,7 @@ class ToolRuntime:
         self.settings = settings
         self.memory = None          # GraphMemory, set by the session
         self.on_memory = None       # callback(event dict) for UI updates
+        self.on_hud = None          # callback(event dict) for the screen HUD overlay (main runtime only)
         self._scale = 1.0          # screenshot px -> screen px
         self._offset = (0, 0)      # top-left of the monitor in the latest screenshot
         self._mon = 1              # monitor index of the latest screenshot
@@ -402,6 +414,19 @@ class ToolRuntime:
             except Exception as e:  # noqa: BLE001
                 note += f" (screenshot failed: {e})"
         out.text += note
+
+    # screen HUD -------------------------------------------------------------
+    def hud_on(self) -> bool:
+        return self.on_hud is not None and bool((self.settings.get("hud") or {}).get("enabled", True))
+
+    def _hud(self, **ev):
+        """Tell the HUD overlay what's about to happen on screen (absolute screen pixels)."""
+        if not self.hud_on():
+            return
+        try:
+            self.on_hud({"type": "hud", **ev})
+        except Exception:  # noqa: BLE001
+            pass
 
     # shell ------------------------------------------------------------------
     def t_run_shell(self, command: str, elevated: bool = False, timeout: int = 120, cwd: str | None = None):
@@ -470,6 +495,7 @@ class ToolRuntime:
         if img.size != (lw, lh):
             img = img.resize((lw, lh))
         self._mon, self._offset, self._scale = idx, (mon["left"], mon["top"]), 1.0
+        self._hud(kind="scan", x=mon["left"], y=mon["top"], w=lw, h=lh)
         if img.width > SHOT_MAX_W:
             self._scale = img.width / SHOT_MAX_W
             img = img.resize((SHOT_MAX_W, round(img.height / self._scale)))
@@ -488,6 +514,11 @@ class ToolRuntime:
         import pyautogui
         pyautogui.FAILSAFE = True
         sx, sy = self._xy(x, y)
+        tx, ty = self._xy(to_x, to_y)
+        if sx is None and action == "scroll":
+            sx, sy = pyautogui.position()
+        if sx is not None:
+            self._hud(kind=action, x=sx, y=sy, to_x=tx, to_y=ty)
         if action == "move":
             pyautogui.moveTo(sx, sy, duration=0.15)
         elif action == "click":
@@ -497,7 +528,6 @@ class ToolRuntime:
         elif action == "right_click":
             pyautogui.rightClick(sx, sy)
         elif action == "drag":
-            tx, ty = self._xy(to_x, to_y)
             pyautogui.moveTo(sx, sy)
             pyautogui.dragTo(tx, ty, duration=0.4, button="left")
         elif action == "scroll":
@@ -509,6 +539,10 @@ class ToolRuntime:
 
     def t_keyboard(self, action: str, text: str = "", keys: list | None = None):
         import pyautogui
+        if action == "type":
+            self._hud(kind="type", chars=len(text))      # never the text itself: it may be a password
+        else:
+            self._hud(kind="keys", keys="+".join(k.lower() for k in (keys or [text]))[:40])
         if action == "type":
             if text.isascii():
                 pyautogui.write(text, interval=0.01)
@@ -522,6 +556,16 @@ class ToolRuntime:
             pyautogui.press((keys or [text])[0].lower())
         time.sleep(0.2)
         return ToolOutput(f"keyboard {action} done")
+
+    def t_point(self, x, y, label: str = "", seconds: float = 8):
+        sx, sy = self._xy(x, y)
+        secs = max(1.5, min(60.0, float(seconds or 8)))
+        if self.hud_on():
+            self._hud(kind="point", x=sx, y=sy, label=str(label or "")[:80], seconds=secs)
+            return ToolOutput(f"Pointing at ({x},{y}) on the HUD for {secs:.0f}s" + (f": {label}" if label else "") + ".")
+        import pyautogui
+        pyautogui.moveTo(sx, sy, duration=0.4)
+        return ToolOutput(f"The HUD is off, so I moved the mouse pointer to ({x},{y}) instead.")
 
     def t_open(self, target: str):
         t = os.path.expanduser(target)

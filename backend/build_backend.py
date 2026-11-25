@@ -13,7 +13,7 @@ COLLECT_ALL = [
     "piper", "kokoro_onnx", "espeakng_loader", "phonemizer", "language_tags", "segments", "csvw",
     "real_ladybug", "playwright", "sounddevice", "soundfile", "_soundfile_data",
     "edge_tts", "msgpack", "mss", "pyautogui", "pynput", "pyperclip", "uvicorn", "anthropic", "openai", "tiktoken", "qrcode",
-    "pypdf", "docx", "watchdog",
+    "pypdf", "docx", "watchdog", "mediapipe",
 ]
 
 args = ["run_backend.py", "--name", "jarvis-backend", "--onedir", "--noconfirm", "--clean",

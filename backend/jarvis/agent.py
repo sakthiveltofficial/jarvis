@@ -279,6 +279,14 @@ class Session:
         threading.Thread(target=self._wake_watchdog, daemon=True).start()
         self.awareness = Awareness(self)
         self.ambient = Ambient(self)
+        # v0.8: screen HUD overlay + webcam hand gestures
+        self.runtime.on_hud = self.emit
+        self.gestures = None
+        self._gesture_ptt = False
+        self._gesture_ptt_at = 0.0
+        self._ptt_pose_off = 0.0
+        self._gesture_lock = threading.Lock()
+        self._sync_gestures()
         STT.preload(self.settings)
         mode = self.settings.get("voice", {}).get("mode", "off")
         if mode != "off":
@@ -349,6 +357,7 @@ class Session:
         self._sync_phone_hub()
         self._sync_node_server()
         self._sync_clap()
+        self._sync_gestures()
         self.home._at = self.home._sum_at = 0.0
         self.emit({"type": "agenda"})
         STT.preload(self.settings)
@@ -418,6 +427,96 @@ class Session:
                 line = "Sollunga?"
             self.emit({"type": "assistant", "text": line, "proactive": "clap"})
             self.speak(line)
+
+    # ------------------------------------------------------------------ hand gestures (gestures.py)
+    def _sync_gestures(self):
+        """Start, stop or restart the webcam gesture tracker to match the settings (off the event loop)."""
+        def work():
+            with self._gesture_lock:
+                g = self.settings.get("gestures") or {}
+                if g.get("enabled"):
+                    if self.gestures is None:
+                        from .gestures import GestureControl
+                        self.gestures = GestureControl(self.settings, self._on_gesture, self._on_hand)
+                    elif self.gestures.running and int(g.get("camera", 0) or 0) != self.gestures.camera:
+                        self.gestures.stop()
+                    self.gestures.start()
+                elif self.gestures is not None and self.gestures.running:
+                    self.gestures.stop()
+                    self._on_hand(None)
+        threading.Thread(target=work, name="gestures-sync", daemon=True).start()
+
+    def gesture_status(self) -> dict:
+        if self.gestures is None:
+            from .gestures import model_ready
+            return {"state": "off", "error": "", "fps": 0, "model_ready": model_ready(), "last_gesture": "",
+                    "hand_visible": False}
+        return self.gestures.status()
+
+    def _on_hand(self, h: dict | None):
+        self.emit({"type": "hand", "hand": h})
+        if self._gesture_ptt:            # palm push-to-talk ends when the palm comes down (or after 30 s)
+            now = time.time()
+            if h is None or now - self._gesture_ptt_at > 30:
+                self._end_gesture_ptt()
+            elif h.get("pose") == "palm":
+                self._ptt_pose_off = 0.0
+            elif not self._ptt_pose_off:
+                self._ptt_pose_off = now
+            elif now - self._ptt_pose_off > 0.8:
+                self._end_gesture_ptt()
+
+    def _end_gesture_ptt(self):
+        if self._gesture_ptt:
+            self._gesture_ptt = False
+            threading.Thread(target=self.ptt_stop, daemon=True).start()
+
+    async def _gesture_stop(self):
+        await self.interrupt()
+        self.set_state(self._idle_state())
+
+    def _on_gesture(self, g: str):
+        """A hand gesture from the webcam: act on it and tell the UI (the orb and HUD react too)."""
+        from .gestures import window_keys
+        cfg = self.settings.get("gestures") or {}
+        if g == "lost":
+            self._end_gesture_ptt()
+            self.emit({"type": "gesture", "gesture": "lost", "action": ""})
+            return
+        action = ""
+        if g == "palm" and cfg.get("palm", True):
+            if self.state == "speaking":
+                self.stop_speaking()
+                action = "stopped talking"
+            elif self.voice_mode != "off":
+                if self.mic.mode == "wake":
+                    self.mic.engage()
+                self._on_wake(source="gesture")
+                action = "listening"
+            elif not self._gesture_ptt and self.state not in ("thinking", "acting", "transcribing"):
+                self.ptt_start()
+                self._gesture_ptt, self._gesture_ptt_at, self._ptt_pose_off = True, time.time(), 0.0
+                action = "listening while your palm is up"
+        elif g == "fist" and cfg.get("fist", True):
+            if self._gesture_ptt:
+                self._end_gesture_ptt()
+                action = "sent"
+            elif self._busy() or self.state == "speaking":
+                asyncio.run_coroutine_threadsafe(self._gesture_stop(), self.loop)
+                action = "stopped"
+        elif g.startswith("swipe_") and cfg.get("windows", True):
+            keys = window_keys(g)
+            if keys:
+                try:
+                    import pyautogui
+                    pyautogui.hotkey(*keys)
+                    action = {"swipe_left": "previous window", "swipe_right": "next window",
+                              "swipe_up": "maximise", "swipe_down": "minimise"}.get(g, "+".join(keys))
+                except Exception as e:  # noqa: BLE001
+                    action = f"couldn't switch windows: {e}"
+        elif g == "pinch_tap" and cfg.get("orb", True):
+            action = "show or hide Jarvis"      # the desktop app does this when it sees the event
+        self.emit({"type": "gesture", "gesture": g, "action": action})
 
     def _follow_up(self) -> float:
         return float(self.settings.get("voice", {}).get("follow_up_s", 10))
@@ -1121,6 +1220,8 @@ class Session:
         }
 
     def shutdown(self):
+        if self.gestures is not None:
+            self.gestures.stop()
         self.mic.close()
         self.scheduler.stop()
         if self.consolidator:

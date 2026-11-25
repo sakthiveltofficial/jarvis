@@ -132,6 +132,7 @@
       <button data-tab="memory">Memory</button>
       <button data-tab="files">Files</button>
       <button data-tab="proactive">Proactive</button>
+      <button data-tab="desktop">Desktop</button>
       <button data-tab="skills">Skills</button>
       <button data-tab="connections">Connections</button>
     </nav>
@@ -433,6 +434,34 @@
 
       <h3>Scheduled</h3>
       <div id="sched-list" class="mlist"></div>
+    </div>
+
+    <div class="tab hidden" id="tab-desktop">
+      <h3>Screen HUD</h3>
+      <p class="hint">A transparent, Iron Man style layer over your screens. It locks on to whatever I click, sweeps the screen when I look at it, points to buttons when I'm showing you how to do something (“show me how to export this”), and keeps live stats in the corner. It never blocks your mouse, and it's hidden from screenshots and screen sharing.</p>
+      <label class="check"><input type="checkbox" id="hud-on" /> Show the screen HUD</label>
+      <label>When to show the stats panel
+        <select id="hud-show">
+          <option value="active">Only while I'm working (recommended)</option>
+          <option value="always">Always</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="hud-stats" /> Live stats panel (CPU, memory, network, battery, current step)</label>
+      <label class="check"><input type="checkbox" id="hud-hand" /> Show where your hand is when gesture control is on</label>
+      <div class="row-actions"><button class="pill" id="hud-test" type="button">Test the HUD</button> <span id="hud-status" class="hint"></span></div>
+
+      <h3>Hand gestures</h3>
+      <p class="hint">Control me with your webcam, no special hardware. The camera picture never leaves this PC and nothing is recorded: each frame becomes 21 hand points and is thrown away. The first start downloads a small hand-tracking model (7.5 MB).</p>
+      <label class="check"><input type="checkbox" id="gs-on" /> Use hand gestures (turns the webcam on)</label>
+      <div class="row2">
+        <label>Camera <small>(0 = default webcam)</small><input id="gs-cam" type="number" min="0" max="9" step="1" /></label>
+        <label>Sensitivity <small>(higher = smaller moves count)</small><input id="gs-sens" type="number" step="0.05" min="0" max="1" /></label>
+      </div>
+      <label class="check"><input type="checkbox" id="gs-palm" /> ✋ Open palm (hold): wake me, or stop me talking. With the mic off, I listen while your palm is up</label>
+      <label class="check"><input type="checkbox" id="gs-fist" /> ✊ Fist (hold): stop what I'm doing</label>
+      <label class="check"><input type="checkbox" id="gs-windows" /> ⟷ Swipe left or right: switch windows · swipe up: maximise · swipe down: minimise</label>
+      <label class="check"><input type="checkbox" id="gs-orb" /> 🤏 Pinch and move: spin the orb · quick pinch: show or hide my window</label>
+      <p id="gs-status" class="hint"></p>
     </div>
 
     <div class="tab hidden" id="tab-skills">

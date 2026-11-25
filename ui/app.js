@@ -39,7 +39,8 @@ function onEvent(ev) {
     case "level": targetLevel = ev.value; break;
     case "handsfree": handsfree = ev.on; break;
     case "voice_mode": voiceMode = ev.mode; wakeReady = ev.wake_ready; renderHandsfree(); break;
-    case "wake": $("t-voice-tile").classList.add("awake"); $("voice-mode").textContent = ev.source === "clap" ? "👏 I'm listening…" : "I'm listening…"; break;
+    case "wake": $("t-voice-tile").classList.add("awake"); $("voice-mode").textContent = ev.source === "clap" ? "👏 I'm listening…" : ev.source === "gesture" ? "✋ I'm listening…" : "I'm listening…"; break;
+    case "gesture": onGesture(ev); break;
     case "wake_sleep": $("t-voice-tile").classList.remove("awake"); renderHandsfree(); break;
     case "mood": renderMood(ev); break;
     case "plan": if (ev.agent === "main") { agenda.plan = ev.plan; renderAgenda(); } break;
@@ -373,6 +374,8 @@ function orbEvent(ev) {
     case "tool_end": if (!ev.ok) orb3d.flash(); break;
     case "error": orb3d.flash(); break;
     case "memory_search": orb3d.task("memory_search", 2.0); break;
+    case "hand": if (settings?.gestures?.orb !== false) orb3d.hand(ev.hand); break;
+    case "gesture": if (settings?.gestures?.orb !== false || ev.gesture === "palm" || ev.gesture === "fist") orb3d.gesture(ev.gesture); break;
   }
 }
 
@@ -455,6 +458,7 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
   if (b.dataset.tab === "proactive") renderSchedules();
   if (b.dataset.tab === "memory") loadConsolidation();
   if (b.dataset.tab === "files") loadFiles();
+  if (b.dataset.tab === "desktop") loadGestureStatus();
 });
 
 function opt(sel, items, value) {
@@ -472,7 +476,49 @@ async function loadSettings() {
   settings = r.settings; presets = r.presets;
   renderLabels();
   applyOrb();
+  applyHud();
 }
+
+// ------------------------------------------------------------------ v0.8: screen HUD + hand gestures (desktop app only)
+const tauri = window.__TAURI__ && window.__TAURI__.core;
+let hudApplied = null;
+async function applyHud(force) {
+  if (!tauri || !settings) return;
+  const h = settings.hud || {};
+  const key = JSON.stringify(h);
+  if (key === hudApplied && !force) return;
+  hudApplied = key;
+  try { await tauri.invoke("hud_sync", { enabled: h.enabled !== false }); }
+  catch (e) { console.warn("[hud]", e); hudApplied = null; }
+}
+function onGesture(ev) {
+  if (ev.gesture === "pinch_tap" && settings?.gestures?.orb !== false && tauri) {
+    tauri.invoke("toggle_main").catch((e) => console.warn("[gesture]", e));
+  }
+  if (!$("tab-desktop").classList.contains("hidden")) loadGestureStatus();
+}
+let gsTimer = 0;
+async function loadGestureStatus() {
+  clearTimeout(gsTimer);
+  if ($("settings").classList.contains("hidden") || $("tab-desktop").classList.contains("hidden")) return;
+  try {
+    const g = await (await fetch(API + "/api/gestures")).json();
+    const names = { off: "Off.", loading: "Starting the hand tracker…", downloading: "Downloading the hand-tracking model (7.5 MB)…",
+      running: `Watching for gestures (${g.fps} fps)${g.hand_visible ? " · I can see your hand ✋" : ""}.`, error: "Problem: " + g.error };
+    let t = names[g.state] || g.state;
+    if (g.last_gesture && g.last_gesture_ago != null && g.last_gesture_ago < 120) t += ` Last gesture: ${g.last_gesture.replace("_", " ")} (${Math.round(g.last_gesture_ago)} s ago).`;
+    $("gs-status").textContent = t;
+  } catch (_) { $("gs-status").textContent = ""; }
+  gsTimer = setTimeout(loadGestureStatus, 1500);
+}
+$("hud-test").onclick = async () => {
+  if (!tauri) { $("hud-status").textContent = "The HUD needs the Jarvis desktop app."; return; }
+  if (!$("hud-on").checked) { $("hud-status").textContent = "Turn the HUD on and save first."; return; }
+  await applyHud(true);
+  setTimeout(() => fetch(API + "/api/hud/test", { method: "POST" }), 600);
+  $("hud-status").textContent = "Look at the middle of your main screen.";
+  setTimeout(() => ($("hud-status").textContent = ""), 5000);
+};
 
 async function openSettings() {
   await loadSettings();
@@ -513,6 +559,12 @@ async function openSettings() {
   $("beh-silence").value = s.audio.silence_ms; $("beh-speak").checked = s.agent.speak_replies;
   $("beh-headless").checked = s.agent.headless_browser;
   $("ui-orb").checked = s.ui?.orb !== false; $("ui-orb-q").value = s.ui?.orb_quality || "auto";
+  const hd = s.hud || {}, gs = s.gestures || {};
+  $("hud-on").checked = hd.enabled !== false; $("hud-show").value = hd.show || "active";
+  $("hud-stats").checked = hd.stats !== false; $("hud-hand").checked = hd.hand !== false;
+  $("gs-on").checked = !!gs.enabled; $("gs-cam").value = gs.camera ?? 0; $("gs-sens").value = gs.sensitivity ?? 0.5;
+  for (const k of ["palm", "fist", "windows", "orb"]) $("gs-" + k).checked = gs[k] !== false;
+  loadGestureStatus();
   $("mem-auto").checked = s.memory?.auto_save !== false;
   $("mem-cons").checked = s.memory?.consolidate !== false; $("mem-cons-time").value = s.memory?.consolidate_time || "03:00";
   $("mem-half").value = s.memory?.half_life_days ?? 120; $("mem-keep").value = s.memory?.keep_history_days ?? 730;
@@ -590,6 +642,9 @@ function collect() {
               half_life_days: Number($("mem-half").value || 0), keep_history_days: Number($("mem-keep").value || 0), model: $("mem-model").value.trim() },
     files: { auto_recall: $("files-recall").checked, extract_entities: $("files-entities").checked, max_file_mb: Number($("files-max").value || 25) },
     ui: { orb: $("ui-orb").checked, orb_quality: $("ui-orb-q").value },
+    hud: { enabled: $("hud-on").checked, show: $("hud-show").value, stats: $("hud-stats").checked, hand: $("hud-hand").checked },
+    gestures: { enabled: $("gs-on").checked, camera: Number($("gs-cam").value || 0), sensitivity: Number($("gs-sens").value || 0.5),
+                palm: $("gs-palm").checked, fist: $("gs-fist").checked, windows: $("gs-windows").checked, orb: $("gs-orb").checked },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
     voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), follow_up_s: Number($("pv-follow").value || 10),
@@ -818,6 +873,7 @@ $("btn-save").onclick = async () => {
   if (body.voice.mode !== voiceMode) setMode(body.voice.mode);
   loadAgenda();
   if (!$("tab-connections").classList.contains("hidden")) setTimeout(loadConnections, 1500);
+  if (!$("tab-desktop").classList.contains("hidden")) setTimeout(loadGestureStatus, 800);
   $("save-msg").textContent = "Saved ✓";
   setTimeout(() => ($("save-msg").textContent = ""), 2500);
 };

@@ -122,6 +122,21 @@ DEFAULTS = {
         "orb": True,                   # animated particle orb on the home screen (off = the simple glow)
         "orb_quality": "auto",         # auto (drops to low on battery or a slow GPU) | high | low
     },
+    "hud": {                           # screen HUD overlay (see hud.py)
+        "enabled": True,               # transparent, click-through layer over the screen
+        "show": "active",              # active (only while I'm working or pointing) | always (stats stay up)
+        "stats": True,                 # CPU, memory, network and battery panel
+        "hand": True,                  # show where your hand is when gesture control is on
+    },
+    "gestures": {                      # webcam hand gestures (see gestures.py)
+        "enabled": False,              # off until you turn it on: it uses the camera
+        "camera": 0,                   # camera index (0 = default webcam)
+        "sensitivity": 0.5,            # 0..1, higher = smaller movements count
+        "palm": True,                  # open palm: wake me / stop me talking (push to talk if the mic is off)
+        "fist": True,                  # fist: stop what I'm doing
+        "windows": True,               # swipes switch, maximise and minimise windows
+        "orb": True,                   # pinch and move to spin the orb, quick pinch shows/hides my window
+    },
     "briefings": {
         "location": "",                # city for the weather; empty = guess from IP
         "morning": {"enabled": False, "time": "08:00", "weekdays_only": False},
