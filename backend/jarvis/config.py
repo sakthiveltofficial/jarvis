@@ -52,7 +52,7 @@ DEFAULTS = {
         "openai_model": "whisper-1",
     },
     "tts": {
-        "provider": "piper",           # piper | kokoro | elevenlabs | fish_audio | openai | none
+        "provider": "piper",           # piper | kokoro | clone | elevenlabs | fish_audio | openai | none
         "piper_voice": "en_GB-alan-medium",
         "kokoro_voice": "bm_george",
         "kokoro_quality": "int8",      # int8 (~90MB) | fp32 (~310MB)
@@ -62,6 +62,16 @@ DEFAULTS = {
         "fish_reference_id": "",
         "openai_voice": "onyx",
         "openai_model": "gpt-4o-mini-tts",
+        # custom cloned voice (provider "clone", see voiceclone.py)
+        "clone_engine": "fish_speech", # fish_speech (local server) | xtts (local) | fish_audio (cloud)
+        "clone_url": "",               # local server URL; empty = the engine's default port
+        "clone_fallback": "piper",     # voice to use when cloning isn't available
+    },
+    "language": {                      # see lang.py
+        "mode": "ta_en",               # auto | en | ta | ta_en (Tamil and English, mixed freely)
+        "reply": "match",              # match (answer in kind) | en | ta
+        "tamil_voice": "auto",         # auto | edge | elevenlabs | openai | same
+        "edge_voice": "ta-IN-ValluvarNeural",
     },
     "audio": {
         "input_device": None,
@@ -93,6 +103,9 @@ DEFAULTS = {
         "follow_up_s": 10,             # after I reply, keep listening this long without the wake word
         "chime": True,
         "emotion": True,               # notice how you sound and adapt my tone
+        "clap": True,                  # double clap wakes me too (in wake word / always listening modes)
+        "clap_sensitivity": 0.5,       # 0..1, higher = quieter claps count
+        "clap_ack": True,              # answer a clap with a short "Yes?" instead of the chime
     },
     "ui": {
         "orb": True,                   # animated particle orb on the home screen (off = the simple glow)
@@ -109,6 +122,17 @@ DEFAULTS = {
         "cooldown_min": 10,
         "model": "",                   # optional cheaper model for glances (same provider)
     },
+    "ambient": {                       # chime in on my own (see ambient.py)
+        "enabled": True,
+        "quiet_enabled": True, "quiet_start": "23:00", "quiet_end": "07:00",
+        "min_gap_min": 45,             # at most one chime-in per this many minutes
+        "coding_break": True, "coding_break_h": 2.0,
+        "screen_break": True, "screen_break_h": 3.0,
+        "welcome_back": True, "welcome_after_min": 45,
+        "late_night": False, "late_hour": 1,
+        "model": "",                   # optional cheaper model to phrase chime-ins
+    },
+    "home_assistant": {"enabled": True, "url": "", "token": "", "verify_ssl": True},
     "mcp": {"servers": []},            # [{name, command, args, env} | {name, url, headers}, enabled, trusted]
     "node": {                          # let other PCs control this one
         "enabled": False, "port": 8766, "token": "", "name": "", "allow_elevated": False,
@@ -210,6 +234,8 @@ def public(settings: dict) -> dict:
                 srv[k] = {kk: _mask(vv) for kk, vv in srv[k].items()}
     for n in s.get("nodes") or []:
         n["token"] = _mask(n.get("token", ""))
+    ha = s.get("home_assistant") or {}
+    ha["token"] = _mask(ha.get("token", ""))
     ph = s.get("phones") or {}
     ph["devices"] = [{k: v for k, v in d.items() if k != "key"} for d in ph.get("devices") or []]
     return s

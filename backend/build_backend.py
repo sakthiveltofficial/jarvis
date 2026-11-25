@@ -12,7 +12,7 @@ COLLECT_ALL = [
     "faster_whisper", "ctranslate2", "tokenizers", "av", "onnxruntime",
     "piper", "kokoro_onnx", "espeakng_loader", "phonemizer", "language_tags", "segments", "csvw",
     "real_ladybug", "playwright", "sounddevice", "soundfile", "_soundfile_data",
-    "mss", "pyautogui", "pynput", "pyperclip", "uvicorn", "anthropic", "openai", "tiktoken", "qrcode",
+    "edge_tts", "msgpack", "mss", "pyautogui", "pynput", "pyperclip", "uvicorn", "anthropic", "openai", "tiktoken", "qrcode",
 ]
 
 args = ["run_backend.py", "--name", "jarvis-backend", "--onedir", "--noconfirm", "--clean",

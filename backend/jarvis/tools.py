@@ -322,6 +322,14 @@ def describe(name: str, args: dict) -> str:
             detail = f"({a.get('x')}, {a.get('y')})"
         text = f" \"{a['text'][:80]}\"" if a.get("text") else ""
         return " ".join(b for b in bits + [str(detail)] if b).strip() + text
+    if name == "smart_home":
+        a = args
+        bits = [a.get("action", ""), a.get("device") or a.get("service") or a.get("text") or ""]
+        for k, unit in (("brightness", "%"), ("temperature", "°"), ("volume", "%"), ("color", ""), ("hvac_mode", ""),
+                        ("source", "")):
+            if a.get(k) not in (None, ""):
+                bits.append(f"{a[k]}{unit}")
+        return " ".join(str(b) for b in bits if b)
     if name == "plan":
         return args.get("title") or f"step {args.get('step')} {args.get('status', '')}".strip()
     if name in ("schedule", "background_task"):

@@ -26,13 +26,16 @@ class Mic:
     def __init__(self, settings: dict, on_level: Callable[[float], None],
                  on_utterance: Callable[[np.ndarray], None],
                  on_barge: Callable[[np.ndarray], bool] | None = None,
-                 on_wake: Callable[[], None] | None = None):
+                 on_wake: Callable[[], None] | None = None,
+                 on_clap: Callable[[], None] | None = None):
         self.settings = settings
         self.on_level = on_level
         self.on_utterance = on_utterance
         self.on_barge = on_barge
         self.on_wake = on_wake
+        self.on_clap = on_clap
         self.wake = None           # WakeWord detector, used in "wake" mode
+        self.clap = None           # ClapDetector (double clap = wake), used in "wake" and "handsfree" modes
         self.idle_mode = "off"     # mode to return to after push-to-talk: off | wake | handsfree
         self.in_speech = False     # hands-free: currently capturing an utterance
         self._ignore_blocks = 0    # drop this many blocks (our own chime right after the wake word)
@@ -136,6 +139,19 @@ class Mic:
                 with self._lock:
                     self._ptt_buf.append(block)
                 continue
+            if self.clap is not None and self.mode in ("wake", "handsfree") and not self.speaking:
+                try:
+                    clapped = self.clap.process(block)
+                except Exception:  # noqa: BLE001
+                    clapped = False
+                if clapped:
+                    in_speech, speech, loud, silent_ms, cand, checking = False, [], 0, 0, [], None
+                    preroll.clear()
+                    self.engage()
+                    cb = self.on_clap or self.on_wake
+                    if cb:
+                        threading.Thread(target=cb, daemon=True).start()
+                    continue
             if self.wake is not None and (self.mode == "wake" or (self.mode == "handsfree" and self.speaking
                                                                   and self.idle_mode == "wake")):
                 try:

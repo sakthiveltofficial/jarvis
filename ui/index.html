@@ -184,6 +184,7 @@
         <select id="tts-provider">
           <option value="piper">Piper (local, light, default)</option>
           <option value="kokoro">Kokoro (local, more natural)</option>
+          <option value="clone">Custom voice (cloned from your sample)</option>
           <option value="elevenlabs">ElevenLabs</option>
           <option value="fish_audio">Fish Audio</option>
           <option value="openai">OpenAI TTS</option>
@@ -202,6 +203,67 @@
         <label>OpenAI voice <input id="tts-oa-voice" placeholder="onyx" /></label>
         <label>Speed <input id="tts-speed" type="number" step="0.05" min="0.5" max="2" /></label>
       </div>
+
+      <h3>Custom voice</h3>
+      <p class="hint">Give me any voice: upload or record 6 to 30 seconds of clean speech, then pick <b>Custom voice</b> above. <b>Fish Speech</b> and <b>XTTS</b> run fully on this PC (start their local server first; a GPU helps a lot). <b>Fish Audio</b> clones in the cloud with no install. If cloning isn't available I quietly use the fallback voice.</p>
+      <div class="row2">
+        <label>Engine
+          <select id="clone-engine">
+            <option value="fish_speech">Fish Speech (local server)</option>
+            <option value="xtts">XTTS-v2 (local)</option>
+            <option value="fish_audio">Fish Audio (cloud)</option>
+          </select></label>
+        <label>Local server URL <input id="clone-url" placeholder="default: 127.0.0.1:8080 (Fish) / :8020 (XTTS)" /></label>
+      </div>
+      <div class="row2">
+        <label>Fallback voice
+          <select id="clone-fallback"><option value="piper">Piper</option><option value="kokoro">Kokoro</option><option value="elevenlabs">ElevenLabs</option><option value="openai">OpenAI TTS</option></select></label>
+        <label>What you say in the sample <small>(helps Fish Speech)</small><input id="clone-text" placeholder="Exact words spoken in the sample" /></label>
+      </div>
+      <div class="clone-box">
+        <span id="clone-status" class="hint">No sample yet.</span>
+        <div class="row-btns">
+          <label class="pill file-pill">Upload sample<input type="file" id="clone-file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac" hidden /></label>
+          <button class="pill" id="clone-rec" type="button">● Record 15 s</button>
+          <button class="pill" id="clone-play" type="button">▶ Play sample</button>
+          <button class="pill danger" id="clone-del" type="button">Delete</button>
+        </div>
+      </div>
+
+      <h3>Language</h3>
+      <div class="row2">
+        <label>I speak
+          <select id="lang-mode">
+            <option value="ta_en">Tamil and English, mixed freely</option>
+            <option value="en">English</option>
+            <option value="ta">Tamil</option>
+            <option value="auto">Any language (auto detect)</option>
+          </select></label>
+        <label>Reply in
+          <select id="lang-reply">
+            <option value="match">The same language I used (Tamil, English, Tanglish or a mix)</option>
+            <option value="en">Always English</option>
+            <option value="ta">Always Tamil</option>
+          </select></label>
+      </div>
+      <div class="row2">
+        <label>Voice for Tamil sentences
+          <select id="lang-tvoice">
+            <option value="auto">Auto (Edge neural Tamil voice unless my voice speaks Tamil)</option>
+            <option value="edge">Microsoft Edge Tamil voice (free, online)</option>
+            <option value="elevenlabs">ElevenLabs</option>
+            <option value="openai">OpenAI TTS</option>
+            <option value="same">My main voice</option>
+          </select></label>
+        <label>Edge Tamil voice
+          <select id="lang-edge">
+            <option value="ta-IN-ValluvarNeural">Valluvar (male)</option>
+            <option value="ta-IN-PallaviNeural">Pallavi (female)</option>
+            <option value="ta-LK-KumarNeural">Kumar (Sri Lankan, male)</option>
+            <option value="ta-LK-SaranyaNeural">Saranya (Sri Lankan, female)</option>
+          </select></label>
+      </div>
+      <p class="hint">For Tamil, Whisper <b>medium</b> or <b>large-v3-turbo</b> hears far better than small (Local models tab), or use Groq for speed.</p>
 
       <h3>Voice API keys</h3>
       <div class="row2">
@@ -286,6 +348,11 @@
         <label>Wait for you after the wake word (seconds) <input id="pv-listen" type="number" min="2" max="30" /></label>
       </div>
       <label class="check"><input type="checkbox" id="pv-chime" /> Play a soft chime when I hear the wake word</label>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="pv-clap" /> Clap twice to wake me</label>
+        <label>Clap sensitivity <small>(higher = softer claps)</small><input id="pv-clap-s" type="number" step="0.05" min="0" max="1" /></label>
+        <label class="check"><input type="checkbox" id="pv-clap-ack" /> answer “Yes?”</label>
+      </div>
       <label class="check"><input type="checkbox" id="pv-emotion" /> Notice how you sound (stressed, excited, tired) and adapt my tone</label>
       <label class="check"><input type="checkbox" id="pv-selfcheck" /> Double-check my clicks and typing worked (after-action screenshot)</label>
 
@@ -302,6 +369,26 @@
         <label class="check"><input type="checkbox" id="br-e-wd" /> weekdays only</label>
       </div>
       <p class="hint">Briefings cover weather, your calendar and email (when connected under Connections), reminders and what I remember. Ask me “remind me at 6…” or “every Monday, clean my Downloads” to schedule things.</p>
+
+      <h3>Ambient mode</h3>
+      <label class="check"><input type="checkbox" id="am-on" /> Chime in on my own now and then (break reminders, welcome back)</label>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="am-quiet" /> Quiet hours</label>
+        <label>from <input id="am-q-start" type="time" /></label>
+        <label>to <input id="am-q-end" type="time" /></label>
+      </div>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="am-code" /> Suggest a break after coding for</label>
+        <label>hours <input id="am-code-h" type="number" step="0.5" min="0.5" max="12" /></label>
+        <label class="check"><input type="checkbox" id="am-welcome" /> welcome me back</label>
+      </div>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="am-screen" /> Suggest a stretch after any screen time of</label>
+        <label>hours <input id="am-screen-h" type="number" step="0.5" min="0.5" max="12" /></label>
+        <label>At most one every (min) <input id="am-gap" type="number" min="5" max="600" /></label>
+      </div>
+      <label class="check"><input type="checkbox" id="am-late" /> Nudge me toward bed when I'm up very late (outside quiet hours)</label>
+      <p class="hint">I only look at the active window's title and whether you've touched the keyboard or mouse. I stay quiet during meetings, while you're away, and while I'm busy.</p>
 
       <h3>Screen awareness</h3>
       <label class="check"><input type="checkbox" id="aw-on" /> Glance at my screen now and then and offer help when something goes wrong</label>
@@ -330,6 +417,17 @@
       <div id="mcp-status" class="mlist"></div>
       <label>Servers (JSON) <textarea id="mcp-json" rows="9" spellcheck="false"></textarea></label>
       <small class="hint" id="mcp-json-err"></small>
+
+      <h3>Smart home</h3>
+      <p class="hint">Control lights, AC, TV, fans and more by voice through <b>Home Assistant</b>. In Home Assistant open your profile → Security → <i>Long-lived access tokens</i>, create one and paste it here. Then just say “turn the bedroom AC to 24” or “TV off”.</p>
+      <label class="check"><input type="checkbox" id="ha-on" /> Use Home Assistant</label>
+      <div class="row2">
+        <label>Home Assistant URL <input id="ha-url" placeholder="http://homeassistant.local:8123" /></label>
+        <label>Long-lived access token <input id="ha-token" type="password" /></label>
+      </div>
+      <label class="check"><input type="checkbox" id="ha-ssl" /> Verify HTTPS certificate</label>
+      <div class="row-btns"><button class="pill" id="ha-test" type="button">Test connection</button></div>
+      <div id="ha-status" class="hint"></div>
 
       <h3>My phone</h3>
       <p class="hint">Install <a href="https://github.com/sakthiveltofficial/jarvis-mobile/releases" target="_blank" rel="noopener">Jarvis for Android</a> on your phone, then pair it here. You can talk to me from the phone, and I can use the phone for you: read the screen and tap, messages, calls, notifications and files. Same Wi-Fi or Tailscale; the link is end-to-end encrypted.</p>
