@@ -84,6 +84,17 @@ DEFAULTS = {
     },
     "memory": {
         "auto_save": True,             # extract and save knowledge after every turn
+        "consolidate": True,           # nightly clean-up: daily summaries, merge duplicates, fade stale facts
+        "consolidate_time": "03:00",   # local time; missed runs (PC off) happen at the next start
+        "half_life_days": 120,         # an unused fact's strength halves this often (0 = never fade)
+        "keep_history_days": 730,      # outdated facts are kept as history this long (0 = forever)
+        "model": "",                   # optional cheaper model for clean-up and reading files (same provider)
+    },
+    "files": {
+        "folders": [],                 # folders Jarvis indexes (notes, PDFs, documents, code)
+        "auto_recall": True,           # attach matching passages from your files to questions automatically
+        "extract_entities": True,      # one model call per document to link it to people/projects in memory
+        "max_file_mb": 25,
     },
     "agent": {
         # always: confirm every action that changes something

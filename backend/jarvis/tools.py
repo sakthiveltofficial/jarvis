@@ -110,6 +110,13 @@ SPECS = [
              "preferences, past events). Use it whenever past context could help and it isn't already in "
              "the <memory> block.",
              {"query": {"type": "string"}}, ["query"]),
+    ToolSpec("search_files", "Search the user's own indexed files (notes, PDFs, Word/PowerPoint documents, code in "
+             "the folders they chose under Settings → Files). Returns numbered passages with file name, page or "
+             "lines and path. Use it for questions about their documents ('what did the contract say about "
+             "payment?') and cite the files you used.",
+             {"query": {"type": "string", "description": "Keywords or a question."},
+              "limit": {"type": "integer", "description": "How many passages (default 6)."},
+              "folder": {"type": "string", "description": "Optional: only this indexed folder."}}, ["query"]),
     ToolSpec("system_info", "CPU, memory, disk, battery, monitors and OS details.", {}, []),
     ToolSpec("weather", "Current weather and a 3-day forecast. location: city name; empty = the user's home "
              "location from settings, or a guess from the IP address.", {"location": {"type": "string"}}, []),

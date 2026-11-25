@@ -19,6 +19,8 @@ import numpy as np
 from . import config, emotion, homeassistant, lang, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
 from .ambient import Ambient
+from .consolidation import Consolidator
+from .files import FileIndex
 from .audio import Mic, Player
 from .awareness import Awareness
 from .mcp_client import MCPManager
@@ -229,6 +231,17 @@ class Session:
         self.runtime.memory = self.memory
         self.runtime.on_memory = self.emit
         threading.Thread(target=self._memory_worker, daemon=True).start()
+        self.consolidator: Consolidator | None = None
+        self.files: FileIndex | None = None
+        if self.memory is not None:
+            self.consolidator = Consolidator(self.settings, self.memory, self.emit, self._busy)
+            self.consolidator.start()
+            try:
+                self.files = FileIndex(self.settings, self.memory, self.emit)
+                self.files.start()
+            except Exception as e:  # noqa: BLE001
+                traceback.print_exc()
+                print(f"[jarvis] file index unavailable: {e}")
         self.player = Player(self.settings)
         self.task: asyncio.Task | None = None
         self.pending: dict[str, asyncio.Future] = {}
@@ -259,6 +272,7 @@ class Session:
             "cancel_schedule": self._t_cancel_schedule, "use_skill": self._t_use_skill,
             "save_skill": self._t_save_skill, "teach": self._t_teach, "background_task": self._t_background,
             "remote_pc": self._t_remote_pc, "phone": self.phones.tool,
+            "search_files": self._t_search_files,
         }
         threading.Thread(target=self._synth_worker, daemon=True).start()
         threading.Thread(target=self._play_worker, daemon=True).start()
@@ -330,6 +344,8 @@ class Session:
         self.runtime.vision = self.provider.vision
         self.mcp.reload(self.settings)
         self.scheduler.sync_briefings()
+        if self.files:
+            self.files.sync()
         self._sync_phone_hub()
         self._sync_node_server()
         self._sync_clap()
@@ -672,9 +688,33 @@ class Session:
             traceback.print_exc()
             return text
         self.emit({"type": "memory_search", "query": text, "nodes": res["nodes"], "edges": res["edges"]})
-        if not res["text"]:
-            return text
-        return f"{text}\n\n<memory>\nRelevant things you remember (from your knowledge graph):\n{res['text']}\n</memory>"
+        out = text
+        if res["text"]:
+            out += f"\n\n<memory>\nRelevant things you remember (from your knowledge graph):\n{res['text']}\n</memory>"
+        return out + self._file_recall(text)
+
+    def _file_recall(self, text: str) -> str:
+        """Attach the best passages from the user's indexed files when they clearly match the message."""
+        if not self.files or not (self.settings.get("files") or {}).get("auto_recall", True) or not self.files.folders():
+            return ""
+        if len(gm.keywords(text)) < 2:
+            return ""
+        try:
+            hits = [h for h in self.files.search(text, limit=3) if h["coverage"] >= 0.5]
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return ""
+        if not hits:
+            return ""
+        self.emit({"type": "file_search", "query": text, "auto": True,
+                   "sources": [self.files.public_hit(h) for h in hits], "nodes": [h["doc_id"] for h in hits]})
+        return ("\n\n<files>\nPassages from the user's own files that may be relevant (cite file and page if used):\n"
+                + self.files.format_hits(hits, max_chars=900) + "\n</files>")
+
+    def _t_search_files(self, a: dict) -> tools.ToolOutput:
+        if not self.files:
+            return tools.ToolOutput("File search is unavailable (graph memory failed to open).", is_error=True)
+        return self.files.tool(a)
 
     # ------------------------------------------------------------------ prompt
     def system_prompt(self, vision: bool, background: bool = False, agent_id: str = "main") -> str:
@@ -1083,6 +1123,10 @@ class Session:
     def shutdown(self):
         self.mic.close()
         self.scheduler.stop()
+        if self.consolidator:
+            self.consolidator.stop()
+        if self.files:
+            self.files.stop()
         self.awareness.stop()
         self.ambient.stop()
         self.mcp.close()

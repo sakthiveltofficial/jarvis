@@ -59,6 +59,11 @@ function onEvent(ev) {
     case "memory_search": onMemorySearch(ev); break;
     case "memory_saving": $("graph-query").textContent = "saving what I learned…"; break;
     case "memory_update": onMemoryUpdate(ev); break;
+    case "memory_consolidating": $("graph-query").textContent = "tidying up my memory…"; if (consVisible()) loadConsolidation(); break;
+    case "memory_consolidated": onConsolidated(ev); break;
+    case "files_status": if (filesVisible()) renderFiles(ev); break;
+    case "files_entities": if (ev.nodes && ev.nodes.length) loadGraph(); break;
+    case "file_search": onFileSearch(ev); break;
     case "phones": if (!$("tab-connections").classList.contains("hidden")) loadPhones(); break;
     case "phone_paired": clearInterval(qrTimer); $("phone-qr").classList.add("hidden"); loadPhones(); break;
     case "confirm_done": if ($("confirm-box").dataset.id === ev.id) $("confirm-box").classList.add("hidden"); break;
@@ -448,6 +453,8 @@ document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
   if (b.dataset.tab === "skills") loadSkills();
   if (b.dataset.tab === "connections") loadConnections();
   if (b.dataset.tab === "proactive") renderSchedules();
+  if (b.dataset.tab === "memory") loadConsolidation();
+  if (b.dataset.tab === "files") loadFiles();
 });
 
 function opt(sel, items, value) {
@@ -507,6 +514,14 @@ async function openSettings() {
   $("beh-headless").checked = s.agent.headless_browser;
   $("ui-orb").checked = s.ui?.orb !== false; $("ui-orb-q").value = s.ui?.orb_quality || "auto";
   $("mem-auto").checked = s.memory?.auto_save !== false;
+  $("mem-cons").checked = s.memory?.consolidate !== false; $("mem-cons-time").value = s.memory?.consolidate_time || "03:00";
+  $("mem-half").value = s.memory?.half_life_days ?? 120; $("mem-keep").value = s.memory?.keep_history_days ?? 730;
+  $("mem-model").value = s.memory?.model || "";
+  const fs = s.files || {};
+  $("files-recall").checked = fs.auto_recall !== false; $("files-entities").checked = fs.extract_entities !== false;
+  $("files-max").value = fs.max_file_mb ?? 25;
+  if (!$("tab-memory").classList.contains("hidden")) loadConsolidation();
+  if (filesVisible()) loadFiles();
   $("barge-on").checked = s.audio.barge_in !== false;
   $("barge-echo").value = s.audio.echo_gain ?? 0.6;
   $("barge-ms").value = s.audio.barge_check_ms ?? 900;
@@ -571,7 +586,9 @@ function collect() {
     language: { mode: $("lang-mode").value, reply: $("lang-reply").value, tamil_voice: $("lang-tvoice").value, edge_voice: $("lang-edge").value },
     audio: { input_device: dev($("audio-in").value), output_device: dev($("audio-out").value), silence_ms: Number($("beh-silence").value || 900),
              barge_in: $("barge-on").checked, echo_gain: Number($("barge-echo").value || 0.6), barge_check_ms: Number($("barge-ms").value || 900) },
-    memory: { auto_save: $("mem-auto").checked },
+    memory: { auto_save: $("mem-auto").checked, consolidate: $("mem-cons").checked, consolidate_time: $("mem-cons-time").value || "03:00",
+              half_life_days: Number($("mem-half").value || 0), keep_history_days: Number($("mem-keep").value || 0), model: $("mem-model").value.trim() },
+    files: { auto_recall: $("files-recall").checked, extract_entities: $("files-entities").checked, max_file_mb: Number($("files-max").value || 25) },
     ui: { orb: $("ui-orb").checked, orb_quality: $("ui-orb-q").value },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
@@ -855,7 +872,7 @@ async function loadGraph() {
   try {
     const g = await (await fetch(API + "/api/graph" + ($("graph-history").checked ? "?include_invalid=true" : ""))).json();
     graph.setData(g);
-    $("mem-count").textContent = g.nodes.length;
+    $("mem-count").textContent = g.nodes.filter((n) => n.type !== "Document").length;
     if (!graphLoaded) { graphLoaded = true; setTimeout(() => graph.fit(), 1500); }
   } catch (_) { $("mem-count").textContent = "—"; }
 }
@@ -934,6 +951,17 @@ async function showNode(n) {
   panel.querySelector("b").textContent = r.entity.name;
   panel.querySelector(".np-type").textContent = `${r.entity.type} · mentioned ${r.entity.mentions}× · updated ${r.entity.updated.slice(0, 10)}`;
   panel.querySelector(".np-sum").textContent = r.entity.summary || "";
+  if (r.entity.type === "Document") {
+    panel.querySelector(".np-type").textContent = `File · ${r.entity.chunks || 0} passages · indexed ${String(r.entity.updated).slice(0, 10)}`;
+    const p = el("div", "np-fact", r.entity.path); p.title = r.entity.path;
+    panel.querySelector(".np-facts").appendChild(p);
+    const fb = panel.querySelector(".np-forget");
+    fb.textContent = "Open file"; fb.classList.remove("danger");
+    fb.onclick = () => openFile(r.entity.path);
+    panel.querySelector(".icon-btn").onclick = () => { panel.classList.add("hidden"); graph.selected = null; };
+    panel.classList.remove("hidden");
+    return;
+  }
   const facts = panel.querySelector(".np-facts");
   r.facts.sort((a, b) => (b.valid - a.valid) || b.created.localeCompare(a.created));
   for (const f of r.facts) {
@@ -962,6 +990,123 @@ $("mem-clear").onclick = async () => {
   $("mem-stats").textContent = "All memories erased.";
   loadGraph();
 };
+
+// ------------------------------------------------------------------ v0.8: nightly memory clean-up
+const consVisible = () => !$("settings").classList.contains("hidden") && !$("tab-memory").classList.contains("hidden");
+async function loadConsolidation() {
+  try {
+    const r = await (await fetch(API + "/api/memory/consolidation?days=7")).json();
+    const last = r.last_report;
+    let t = r.running ? "Cleaning up now…" : last ? `Last clean-up ${when(r.last_run)}: ${consSummary(last)}` : "Not run yet.";
+    if (!r.running && r.next_run && r.enabled) t += ` Next: ${when(r.next_run)}.`;
+    $("mem-cons-status").textContent = t;
+    $("mem-cons-run").disabled = !!r.running;
+    const rows = (r.digests || []).map((d) => { const x = el("div", "mrow digest"); const n = el("span", "name"); n.append(el("b", "", d.date), document.createTextNode(d.text)); x.append(n); return x; });
+    $("mem-digests").replaceChildren(...(rows.length ? [el("div", "hint", "Recent days, as I remember them:"), ...rows] : []));
+  } catch (_) { $("mem-cons-status").textContent = "Memory clean-up unavailable."; }
+}
+function consSummary(r) {
+  const bits = [];
+  if (r.days_summarised?.length) bits.push(`summarised ${r.days_summarised.length} day${r.days_summarised.length === 1 ? "" : "s"}`);
+  if (r.entities_merged) bits.push(`merged ${r.entities_merged} duplicate${r.entities_merged === 1 ? "" : "s"}`);
+  if (r.facts_merged) bits.push(`folded ${r.facts_merged} repeated fact${r.facts_merged === 1 ? "" : "s"}`);
+  if (r.facts_faded) bits.push(`faded ${r.facts_faded} stale fact${r.facts_faded === 1 ? "" : "s"}`);
+  const pruned = (r.history_pruned || 0) + (r.orphans_removed || 0);
+  if (pruned) bits.push(`pruned ${pruned} old item${pruned === 1 ? "" : "s"}`);
+  return (bits.join(", ") || "already tidy") + "." + (r.notes?.length ? ` (${r.notes[0]})` : "");
+}
+function onConsolidated(ev) {
+  $("graph-query").textContent = "";
+  loadGraph();
+  if (consVisible()) loadConsolidation();
+  if (ev.report?.manual) addMsg("info", "🧹 Memory tidied: " + consSummary(ev.report));
+}
+$("mem-cons-run").onclick = async () => {
+  $("mem-cons-run").disabled = true;
+  await fetch(API + "/api/memory/consolidate", { method: "POST" });
+  loadConsolidation();
+};
+
+// ------------------------------------------------------------------ v0.8: your files
+const filesVisible = () => !$("settings").classList.contains("hidden") && !$("tab-files").classList.contains("hidden");
+async function loadFiles() {
+  try { renderFiles(await (await fetch(API + "/api/files")).json()); }
+  catch (_) { $("files-list").replaceChildren(el("div", "hint", "File index unavailable.")); }
+}
+function renderFiles(st) {
+  const STATE = { ready: "up to date", indexing: "reading…", queued: "queued", missing: "folder not found" };
+  const rows = (st.folders || []).map((f) => {
+    const r = el("div", "mrow");
+    const n = el("span", "name");
+    let d = `${f.files} file${f.files === 1 ? "" : "s"} · ${f.chunks} passages · ${STATE[f.state] || f.state}`;
+    if (f.state === "indexing" && f.total) d += ` ${f.done}/${f.total}`;
+    if (f.skipped) d += ` · ${f.skipped} without readable text`;
+    n.append(el("b", "", f.path), el("span", "desc", d));
+    const re = el("button", "pill", "Re-read");
+    re.onclick = async () => { renderFiles(await (await fetch(API + "/api/files/reindex", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: f.path }) })).json()); };
+    const del = el("button", "pill danger", "Remove");
+    del.onclick = async () => {
+      if (del.dataset.armed !== "1") { del.dataset.armed = "1"; del.textContent = "Forget its files?"; return; }
+      renderFiles(await (await fetch(API + "/api/files/folders?path=" + encodeURIComponent(f.path), { method: "DELETE" })).json());
+      loadGraph();
+    };
+    r.append(n, re, del);
+    return r;
+  });
+  $("files-list").replaceChildren(...(rows.length ? rows : [el("div", "hint", "No folders yet. Add your notes, documents or projects folder.")]));
+  const cur = st.current ? st.current.split(/[\\/]/).pop() : "";
+  $("files-now").textContent = (cur ? `Reading ${cur}… ` : "") + (st.queued ? `${st.queued} waiting. ` : "") +
+    (st.folders?.length ? (st.watching ? "Watching for changes." : "Checking for changes every 20 minutes.") : "");
+}
+async function addFolder(path) {
+  $("files-err").textContent = "";
+  if (!path) return;
+  const r = await fetch(API + "/api/files/folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+  const j = await r.json();
+  if (!r.ok) { $("files-err").textContent = j.detail || "Couldn't add that folder."; return; }
+  $("files-path").value = "";
+  renderFiles(j);
+}
+$("files-add").onclick = () => addFolder($("files-path").value.trim());
+$("files-path").onkeydown = (e) => { if (e.key === "Enter") addFolder($("files-path").value.trim()); };
+$("files-browse").onclick = async () => {
+  $("files-browse").textContent = "Choose in the dialog…";
+  try {
+    const r = await (await fetch(API + "/api/files/pick", { method: "POST" })).json();
+    if (r.path) { $("files-path").value = r.path; await addFolder(r.path); }
+    else if (r.error) $("files-err").textContent = "No folder picker available here: type or paste the path instead.";
+  } finally { $("files-browse").textContent = "Browse…"; }
+};
+$("files-q").onkeydown = async (e) => {
+  if (e.key !== "Enter" || !$("files-q").value.trim()) return;
+  const r = await (await fetch(API + "/api/files/search?q=" + encodeURIComponent($("files-q").value.trim()))).json();
+  const rows = r.hits.map((h) => {
+    const row = el("div", "mrow");
+    const n = el("span", "name");
+    n.append(el("b", "", h.name + (h.loc ? ` · ${h.loc}` : "")), el("span", "snip", h.snippet));
+    const o = el("button", "pill", "Open"); o.onclick = () => openFile(h.path);
+    row.append(n, o);
+    return row;
+  });
+  $("files-hits").replaceChildren(...(rows.length ? rows : [el("div", "hint", "Nothing found.")]));
+};
+function openFile(path) {
+  fetch(API + "/api/files/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) });
+}
+function onFileSearch(ev) {
+  if (ev.nodes?.length) graph.highlight(ev.nodes, [], "search");
+  if (!ev.sources?.length) return;
+  const box = el("div", "sources");
+  box.append(el("span", "lbl", ev.auto ? "from your files:" : "sources:"));
+  for (const s of ev.sources) {
+    const b = el("button", "src"); b.type = "button"; b.title = `${s.path}\n\n${s.snippet}…`;
+    b.append(el("span", "", "📄 " + s.name)); if (s.loc) b.append(el("small", "", s.loc));
+    b.onclick = () => openFile(s.path);
+    box.append(b);
+  }
+  $("transcript").appendChild(box);
+  box.scrollIntoView({ block: "end" });
+}
 
 // ------------------------------------------------------------------ boot
 (async () => {

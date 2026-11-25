@@ -24,6 +24,8 @@ files, mouse and keyboard, apps, and a real web browser.
 │            Fish Audio, OpenAI                            │
 │ audio.py   mic capture, energy VAD, barge-in, playback   │
 │ memory.py  long-term knowledge graph (LadybugDB/Kùzu)    │
+│ consolidation.py  nightly memory clean-up                │
+│ files.py   your folders indexed into the graph + FTS     │
 │ models.py  in-app download of Whisper/Piper/Kokoro/wake  │
 │ wakeword.py   "Hey Jarvis" (openWakeWord ONNX)           │
 │ scheduler.py  reminders, routines, briefings             │
@@ -262,6 +264,40 @@ Jarvis builds a personal knowledge graph in an embedded graph database
   (including outdated ones) or forget it. "show outdated facts" shows the history.
 - v1's `memory.md` is imported into the graph automatically on first start.
 
+### Nightly clean-up
+
+Once a night (⚙ → Memory → Nightly clean-up, default 03:00; if the PC is off then, it catches up at the next
+start once Jarvis is idle) and whenever you press **Clean up now**, Jarvis:
+
+- **summarises each day** you talked into a short diary entry (a `Digest` node linked to the people and things
+  it covers), so "what did we do last Tuesday?" still works after old raw snippets are pruned;
+- **merges duplicates**: entities with the same name in different spellings ("the Acme Corp" / "Acme Corp")
+  automatically, near misses ("Acme" / "Acme Corporation", "Mom" / "Mum") after asking the model; facts that
+  repeat each other are folded into one;
+- **fades stale facts**: every recall or repeat reinforces a fact; an unused fact's strength halves every
+  *half-life* (120 days by default) and below a threshold it is marked outdated (reason "faded"), kept as
+  history. Names, family, birthdays, home, work and allergies never fade;
+- **prunes** outdated history older than 2 years (configurable, 0 = forever), raw conversation snippets older
+  than 30 days whose day has a summary, and orphan entities nothing points to.
+
+Merging, fading and pruning work without a model; summaries and the smart merges use the Brain model, or a
+cheaper one set under "Model for clean-up and reading files" (e.g. `claude-haiku-5-5`).
+
+## Your files
+
+⚙ → **Files**: add folders (type a path or **Browse…**). Jarvis reads notes (`.md`, `.txt`…), PDFs, Word
+(`.docx`), PowerPoint (`.pptx`), HTML, notebooks and code, splits them into passages (per page, heading or
+block of lines) and stores them in the graph as `Document` and `Chunk` nodes linked to the people, companies and
+projects they mention, plus a local full-text index (SQLite FTS5, `~/.jarvis/files.db`). Folders are watched
+for changes, and re-checked every 20 minutes and at startup. `node_modules`, `.git`, build folders, hidden
+folders and files over 25 MB are skipped.
+
+Ask "what did that contract say about payment?" and matching passages are attached to the question
+automatically (or the agent calls `search_files`); answers name the file and page, and the sources show up as
+chips in the conversation that open the file. Documents linked to things Jarvis knows appear in the memory
+graph as blue nodes. Linking documents to entities costs one quick model call per document (code is
+skipped) and can be turned off. Scanned PDFs without a text layer are listed as "without readable text".
+
 ## Computer control and safety
 
 Jarvis has the same power over your machine as your user account, and more when you approve admin actions:
@@ -277,7 +313,8 @@ Jarvis has the same power over your machine as your user account, and more when 
 
 ## Data
 
-Everything lives in `~/.jarvis/`: `settings.json` (including API keys, app tokens and paired phones' device keys, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech and wake word models), `skills/`, `schedule.json`, `plans.json`, `voice_profile.json` (your voice baseline for tone detection), `logs/` (MCP server output) and `browser-profile/` (the automation browser's logins).
+Everything lives in `~/.jarvis/`: `settings.json` (including API keys, app tokens and paired phones' device keys, stored in plain text with user-only permissions), `graph.db` (the knowledge graph, including indexed files), `files.db` (full-text index of your files),
+`consolidation.json` (clean-up history), `models/` (downloaded speech and wake word models), `skills/`, `schedule.json`, `plans.json`, `voice_profile.json` (your voice baseline for tone detection), `logs/` (MCP server output) and `browser-profile/` (the automation browser's logins).
 Environment variables like `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ELEVENLABS_API_KEY` and `FISH_AUDIO_API_KEY` also work.
 
 ## Download (Windows)
