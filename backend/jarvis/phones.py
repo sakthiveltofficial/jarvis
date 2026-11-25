@@ -37,7 +37,7 @@ MAX_FILE = 25 * 1024 * 1024
 
 # Desktop UI events forwarded to phones (the rest are desktop-only or too chatty).
 FORWARD = {"state", "user", "assistant", "info", "error", "tool_start", "tool_end", "confirm", "confirm_done",
-           "memory_search", "bg_update"}
+           "memory_search", "bg_update", "ai_mood", "mood"}     # moods colour the AR orb on the phone
 
 
 # --------------------------------------------------------------------------- crypto
@@ -383,6 +383,24 @@ class PhoneHub:
             s.on_phone_notification(conn.device.get("name", "phone"), m)
         elif t == "unpair":
             self.remove(conn.id)
+        elif t == "req":
+            ar = getattr(s, "ar", None)
+            if ar is None:
+                await conn.send({"t": "resp", "id": m.get("id"), "ok": False, "error": "AR isn't available on this PC."})
+            else:
+                ar.pool.submit(self._serve, conn, ar, m)
+
+    def _serve(self, conn: PhoneConn, ar, m: dict):
+        """A request from the phone (AR camera features): runs on a worker thread, answers with "resp"."""
+        try:
+            data = ar.handle(conn.device, str(m.get("op") or ""), m.get("args") or {})
+            out = {"t": "resp", "id": m.get("id"), "ok": True, "data": data}
+        except Exception as e:  # noqa: BLE001
+            out = {"t": "resp", "id": m.get("id"), "ok": False, "error": str(e) or type(e).__name__}
+        try:
+            self._submit(self._safe_send(conn, out))
+        except Exception:  # noqa: BLE001
+            pass
 
     # outbound ------------------------------------------------------------------
     def _submit(self, coro):

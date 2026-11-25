@@ -16,7 +16,7 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from . import config, emotion, homeassistant, lang, llm, nodes, persona, phones, scheduler, skills, tools
+from . import ar, config, emotion, homeassistant, lang, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
 from .ambient import Ambient
 from .consolidation import Consolidator
@@ -107,6 +107,8 @@ class Runner:
                               phones=bool((st.get("phones") or {}).get("devices")))
         if homeassistant.configured(st):
             out = out + [homeassistant.SPEC]
+        if not self.background and (st.get("phones") or {}).get("devices"):
+            out = out + [ar.SPEC]
         return out + self.s.mcp.specs()
 
     async def call_tool(self, call: llm.ToolCall) -> tools.ToolOutput:
@@ -142,10 +144,10 @@ class Runner:
         return tools.needs_confirmation(call.name, call.args, mode)
 
     # loop --------------------------------------------------------------------
-    async def run(self, text: str) -> tuple[list[str], bool]:
+    async def run(self, text: str, images: list[str] | None = None) -> tuple[list[str], bool]:
         p = self.p
         mark = len(p.history)
-        p.add_user(text)
+        p.add_user(text, images) if images else p.add_user(text)
         replies: list[str] = []
         specs = self.specs()
         max_steps = int(self.s.settings["agent"].get("max_steps", 40)) * (3 if self.background else 1)
@@ -266,12 +268,13 @@ class Session:
         self._sync_node_server()
         self.reply_to: str | None = None       # phone device id that should hear this turn's replies ("-" = nobody)
         self.phones = phones.PhoneHub(self)
+        self.ar = ar.ARHub(self)
         self._sync_phone_hub()
         self.meta_tools = {
             "schedule": self._t_schedule, "list_schedules": self._t_list_schedules,
             "cancel_schedule": self._t_cancel_schedule, "use_skill": self._t_use_skill,
             "save_skill": self._t_save_skill, "teach": self._t_teach, "background_task": self._t_background,
-            "remote_pc": self._t_remote_pc, "phone": self.phones.tool,
+            "remote_pc": self._t_remote_pc, "phone": self.phones.tool, "spatial": self.ar.tool,
             "search_files": self._t_search_files,
         }
         threading.Thread(target=self._synth_worker, daemon=True).start()
@@ -641,8 +644,8 @@ class Session:
             self.emit({"type": "error", "text": f"Text-to-speech failed: {e}"})
 
     # ------------------------------------------------------------------ phones
-    def phone_utterance(self, wav: bytes, origin: str):
-        """Push-to-talk audio recorded on a phone (16 kHz WAV)."""
+    def phone_utterance(self, wav: bytes, origin: str, images: list[str] | None = None, context: str = ""):
+        """Push-to-talk audio recorded on a phone (16 kHz WAV); images/context come with an AR "look"."""
         from .speech import SR, from_wav_bytes
         try:
             audio, sr = from_wav_bytes(wav)
@@ -671,7 +674,8 @@ class Session:
                 self.emit({"type": "mood", **mood})
             except Exception:  # noqa: BLE001
                 pass
-        asyncio.run_coroutine_threadsafe(self.handle_user(text, voice=True, mood=mood, origin=origin), self.loop)
+        asyncio.run_coroutine_threadsafe(self.handle_user(text, voice=True, mood=mood, origin=origin, images=images,
+                                                          context=context), self.loop)
 
     def on_phone_notification(self, phone: str, n: dict):
         app, title, text = n.get("app", ""), n.get("title", ""), (n.get("text") or "")[:300]
@@ -836,11 +840,13 @@ class Session:
         return persona.system_prompt(self.settings, vision, profile, ex)
 
     # ------------------------------------------------------------------ conversation
-    async def handle_user(self, text: str, voice: bool = False, mood: dict | None = None, origin: str | None = None):
-        """origin: None = this PC; a phone device id = reply through that phone; "-" = a phone that wants no audio."""
+    async def handle_user(self, text: str, voice: bool = False, mood: dict | None = None, origin: str | None = None,
+                          images: list[str] | None = None, context: str = ""):
+        """origin: None = this PC; a phone device id = reply through that phone; "-" = a phone that wants no audio.
+        images: base64 PNGs the user is showing (the phone's AR "what am I looking at?"), with a context note."""
         self.last_lang = lang.detect(text) or self.last_lang
         # A spoken yes/no answers a pending confirmation.
-        if self.pending and voice:
+        if self.pending and voice and not images:
             fid = next(iter(self.pending))
             no = bool(NO.match(text) or re.search(lang.NO_TA, text, re.I))
             if YES.match(text) or no:
@@ -858,7 +864,7 @@ class Session:
             await self.interrupt()
         self.main.cancelled = False
         self.reply_to = origin
-        self.task = asyncio.create_task(self._run(text, mood))
+        self.task = asyncio.create_task(self._run(text, mood, images=images, context=context))
 
     async def interrupt(self):
         self.main.cancelled = True
@@ -907,12 +913,15 @@ class Session:
                 extra.append(note)
         return "\n".join(extra + [text]) if extra else text
 
-    async def _run(self, text: str, mood: dict | None = None, auto: bool = False):
+    async def _run(self, text: str, mood: dict | None = None, auto: bool = False, images: list[str] | None = None,
+                   context: str = ""):
         prompt = self._decorate(await asyncio.to_thread(self._recall, text), mood)
+        if context:
+            prompt = f"<context>{context}</context>\n" + prompt
         if self.reply_to and not auto:
             prompt = "<context>The user is talking to you from their phone, away from this PC's screen.</context>\n" + prompt
         try:
-            replies, ok = await self.main.run(prompt)
+            replies, ok = await self.main.run(prompt, images=images)
         finally:
             self.reply_to = None
         if ok and not auto:

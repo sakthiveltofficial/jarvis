@@ -43,7 +43,7 @@ class Provider:
     def reset(self):
         self.history = []
 
-    def add_user(self, text: str): ...
+    def add_user(self, text: str, images: list[str] | None = None): ...
     def step(self, system: str, tools: list[ToolSpec]) -> Step: ...
     def add_tool_results(self, results: list[tuple[ToolCall, ToolOutput]]): ...
 
@@ -61,8 +61,15 @@ class AnthropicProvider(Provider):
         self.model = llm.get("model") or "claude-opus-5-5"
         self.vision = bool(llm.get("vision", True))
 
-    def add_user(self, text: str):
-        self.history.append({"role": "user", "content": text})
+    def add_user(self, text: str, images: list[str] | None = None):
+        """images: base64 PNGs the user is showing (e.g. the phone camera in AR)."""
+        if images and self.vision:
+            self.history.append({"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b}} for b in images
+            ] + [{"type": "text", "text": text}]})
+            self._prune_images()
+        else:
+            self.history.append({"role": "user", "content": text})
 
     def step(self, system: str, tools: list[ToolSpec]) -> Step:
         llm = self.settings["llm"]
@@ -115,6 +122,11 @@ class AnthropicProvider(Provider):
         for msg in reversed(self.history):
             if msg["role"] != "user" or not isinstance(msg["content"], list):
                 continue
+            if any(isinstance(b, dict) and b.get("type") == "image" for b in msg["content"]):   # a photo the user sent
+                seen += 1
+                if seen > self.KEEP_IMAGES:
+                    msg["content"] = [b for b in msg["content"] if b.get("type") != "image"] + [
+                        {"type": "text", "text": "[older photo removed]"}]
             for b in msg["content"]:
                 if not isinstance(b, dict) or b.get("type") != "tool_result" or not isinstance(b.get("content"), list):
                     continue
@@ -140,8 +152,13 @@ class OpenAICompatProvider(Provider):
         self.vision = bool(llm.get("vision", False))
         self.tools_supported = True
 
-    def add_user(self, text: str):
-        self.history.append({"role": "user", "content": text})
+    def add_user(self, text: str, images: list[str] | None = None):
+        if images and self.vision:
+            self._prune_images()
+            self.history.append({"role": "user", "content": [{"type": "text", "text": text}] + [
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b}"}} for b in images]})
+        else:
+            self.history.append({"role": "user", "content": text})
 
     def step(self, system: str, tools: list[ToolSpec]) -> Step:
         msgs = [{"role": "system", "content": system}] + self.history
@@ -190,7 +207,9 @@ class OpenAICompatProvider(Provider):
         idx = [i for i, m in enumerate(self.history)
                if m["role"] == "user" and isinstance(m.get("content"), list)]
         for i in idx[:-(self.KEEP_IMAGES - 1) or None]:
-            self.history[i] = {"role": "user", "content": "[older screenshot removed]"}
+            said = " ".join(c.get("text", "") for c in self.history[i]["content"]
+                            if isinstance(c, dict) and c.get("type") == "text" and c.get("text") != "[screenshot from tool]")
+            self.history[i] = {"role": "user", "content": (said + " [older image removed]").strip()}
 
 
 def make_provider(settings: dict) -> Provider:

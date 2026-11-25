@@ -125,7 +125,9 @@ def _extras(ex: dict, user: str) -> str:
                    "To work an app on the phone: open_app, then read the numbered screen list and tap/type by index. "
                    "Each action returns the updated screen; check it before the next step. Prefer the direct actions "
                    "(sms, call, notifications, files, contacts) over tapping through apps when they fit. If something "
-                   "isn't allowed on the phone, tell them which switch to turn on in the app's Phone tab.")
+                   "isn't allowed on the phone, tell them which switch to turn on in the app's Phone tab. The app's AR tab "
+                   "shows you through the phone camera: 'where did I leave X?' -> `spatial` action=find; notes they "
+                   "pinned in their room -> `spatial` action=notes.")
     if ex.get("last_lang") and ex["last_lang"] != "English":
         out.append(f"\n{user}'s last message was in {ex['last_lang']}.")
     if ex.get("home"):
