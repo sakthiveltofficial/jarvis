@@ -273,6 +273,18 @@ APK from its Releases, then on the PC open ⚙ → Connections → **My phone** 
   relay. Pairing uses a one-time secret in the QR code (10 minutes, single use) to hand the phone its own device key;
   every message after that is AES-256-GCM encrypted and bound to the connection. Remove a phone in Connections at any
   time. The phone link only listens while "Let my phone connect" is on (pairing turns it on).
+- **Jarvis AR (v0.9.0, phone app v0.2.0+).** The app's AR tab (Google ARCore) brings Jarvis into the room:
+  - **The orb in your room**: the same particle orb and mood colours as this screen, floating where you put it and
+    rippling as it talks.
+  - **"What am I looking at?"**: point the camera at a device, a document, a plant or an error on a screen and ask;
+    the photo goes to Jarvis (needs a model with vision), which explains it or acts on it with its tools.
+  - **Smart-home overlay**: scan a room and floating controls appear on the lights, AC and TV it recognises from
+    Home Assistant. Pin a control to have it reappear there next time.
+  - **Spatial notes**: pin a note to your desk or fridge; a photo of the spot lets ARCore find it again when you come
+    back (nothing leaves your PC and phone), with an optional reminder.
+  - **Object finder**: with "Remember what I see" on, the phone glances every 20 s and Jarvis catalogues what's
+    where for two weeks. Ask "where did I leave my keys?" (the `spatial` tool) to get the last sighting and a photo.
+    Sightings live in `~/.jarvis/ar/`.
 - Prefer not to install an app? [mobile-mcp](https://github.com/mobile-next/mobile-mcp) works as an MCP server under
   Connections → Apps while the phone is connected over (wireless) ADB.
 
