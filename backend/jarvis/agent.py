@@ -136,12 +136,15 @@ class Runner:
                 self.set_state("thinking")
                 system = self.s.system_prompt(p.vision, background=self.background, agent_id=self.id)
                 step = await asyncio.to_thread(p.step, system, specs)
-                if step.text.strip():
-                    self.last_text = step.text.strip()
+                text, mood = persona.split_mood(step.text)
+                if mood and not self.background:
+                    self.emit({"type": "ai_mood", "mood": mood})
+                if text.strip():
+                    self.last_text = text.strip()
                     self.emit({"type": "assistant", "text": self.last_text})
                     replies.append(self.last_text)
                     if not self.background:
-                        self.s.speak(step.text)
+                        self.s.speak(text)
                 if not step.tool_calls:
                     break
                 results = []
@@ -630,6 +633,7 @@ class Session:
                                     if b["status"] == "running"),
             "plan": self._plan_text(agent_id),
             "background_agent": background,
+            "mood_tag": (self.settings.get("ui") or {}).get("orb", True),
         }
         return persona.system_prompt(self.settings, vision, profile, ex)
 

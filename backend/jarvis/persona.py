@@ -5,7 +5,22 @@ import datetime
 import getpass
 import os
 import platform
+import re
 
+# The orb on the home screen changes colour and motion with the mood Jarvis is speaking in. The model marks it
+# with a tiny tag at the start of a reply; the tag is stripped before the text is shown, spoken or remembered.
+MOODS = ("calm", "happy", "excited", "curious", "focused", "concerned", "apologetic", "playful")
+_MOOD_RE = re.compile(r"\s*[<\[]\s*mood\s*[:=>]\s*([a-z]+)\s*(?:</\s*mood\s*>|\])\s*", re.I)
+
+
+def split_mood(text: str) -> tuple[str, str | None]:
+    """Remove every mood tag from a reply. Returns (clean text, first valid mood or None)."""
+    text = text or ""
+    found = [m.group(1).lower() for m in _MOOD_RE.finditer(text)]
+    if not found:
+        return text, None
+    mood = next((w for w in found if w in MOODS), None)
+    return _MOOD_RE.sub(" ", text).strip(), mood
 
 
 def system_prompt(settings: dict, vision: bool, profile: str = "", ex: dict | None = None) -> str:
@@ -80,6 +95,10 @@ Core things you know about {user} (most recent first):
 
 def _extras(ex: dict, user: str) -> str:
     out = []
+    if ex.get("mood_tag") and not ex.get("background_agent"):
+        out.append(f"\nYour face on screen is a particle orb that shows your mood. Start each reply you write with one "
+                   f"tag <mood>X</mood>, where X is one of: {', '.join(MOODS)}. Pick the feeling you're speaking with. "
+                   "It's hidden from {user}, so never mention it.".replace("{user}", user))
     if ex.get("background_agent"):
         out.append(f"\nYou are running as a BACKGROUND agent: {user} is not watching this conversation. Don't ask "
                    "questions; make sensible choices and note them in your final summary. You can't use the mouse "

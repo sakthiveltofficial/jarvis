@@ -94,6 +94,10 @@ DEFAULTS = {
         "chime": True,
         "emotion": True,               # notice how you sound and adapt my tone
     },
+    "ui": {
+        "orb": True,                   # animated particle orb on the home screen (off = the simple glow)
+        "orb_quality": "auto",         # auto (drops to low on battery or a slow GPU) | high | low
+    },
     "briefings": {
         "location": "",                # city for the weather; empty = guess from IP
         "morning": {"enabled": False, "time": "08:00", "weekdays_only": False},

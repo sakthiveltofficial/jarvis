@@ -109,6 +109,25 @@ In hands-free mode Jarvis keeps listening while it talks:
 Tune it in ⚙ → Memory → Interruptions. With loud speakers and no headphones, raise **Echo guard** if Jarvis
 interrupts itself.
 
+## The orb: Jarvis's face
+
+The home screen shows a GPU particle orb (Three.js, about 14,000 particles) that shows what Jarvis is doing
+and feeling:
+
+- **Shape follows the state.** A slow breathing sphere when idle, a ring that leans toward you while it
+  listens, a swirling violet vortex while it thinks, and a sphere that ripples outward while it speaks.
+  While a tool runs, the particles form an icon for it: a phone, a clock (reminders), a node cluster
+  (memory), a globe (web and apps) or a gear (everything else).
+- **Sound moves it.** Jarvis's voice pushes the particles out in waves; your voice draws them in.
+- **Mood sets colour and pace.** Jarvis tags each reply with the mood it's speaking in (calm, happy,
+  excited, curious, focused, concerned, apologetic, playful); the tag is hidden from the chat and the voice.
+  Between replies, the emotion detector's read of you takes over: stressed turns a slow, settling teal,
+  tired a soft lavender. Errors flash red.
+
+⚙ → Behaviour → Look turns it off (back to the simple glow) or sets the quality. **Auto** switches to a
+5,000-particle, 30 fps low-power mode on battery, on 4-core machines, or when the first seconds run slowly.
+Without WebGL the app quietly keeps the glow.
+
 ## Always ready: "Hey Jarvis"
 
 The default listening mode is the wake word. Jarvis runs the open-source
