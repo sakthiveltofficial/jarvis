@@ -16,13 +16,14 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from . import ar, config, emotion, homeassistant, lang, llm, nodes, persona, phones, scheduler, skills, tools
+from . import ar, config, emotion, homeassistant, lang, lifelog, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
 from .ambient import Ambient
 from .consolidation import Consolidator
 from .files import FileIndex
 from .audio import Mic, Player
 from .awareness import Awareness
+from .wellbeing import Wellbeing
 from .mcp_client import MCPManager
 from .speech import STT, TTS
 
@@ -109,6 +110,8 @@ class Runner:
             out = out + [homeassistant.SPEC]
         if not self.background and (st.get("phones") or {}).get("devices"):
             out = out + [ar.SPEC]
+        if not self.background:
+            out = out + [lifelog.SPEC]
         return out + self.s.mcp.specs()
 
     async def call_tool(self, call: llm.ToolCall) -> tools.ToolOutput:
@@ -289,6 +292,12 @@ class Session:
         self._gesture_ptt_at = 0.0
         self._ptt_pose_off = 0.0
         self._gesture_lock = threading.Lock()
+        # v0.10: one webcam stream shared by gestures and Presence (face at the desk, posture), health nudges,
+        # life log and the weekly life report
+        from .camera import CameraHub
+        self.camera = CameraHub(self.settings)
+        self.wellbeing = Wellbeing(self, self.camera)
+        self.meta_tools["life"] = self.wellbeing.tool
         self._sync_gestures()
         STT.preload(self.settings)
         mode = self.settings.get("voice", {}).get("mode", "off")
@@ -361,6 +370,8 @@ class Session:
         self._sync_node_server()
         self._sync_clap()
         self._sync_gestures()
+        threading.Thread(target=self.wellbeing.sync, name="presence-sync", daemon=True).start()
+        self.camera.sync()
         self.home._at = self.home._sum_at = 0.0
         self.emit({"type": "agenda"})
         STT.preload(self.settings)
@@ -440,9 +451,7 @@ class Session:
                 if g.get("enabled"):
                     if self.gestures is None:
                         from .gestures import GestureControl
-                        self.gestures = GestureControl(self.settings, self._on_gesture, self._on_hand)
-                    elif self.gestures.running and int(g.get("camera", 0) or 0) != self.gestures.camera:
-                        self.gestures.stop()
+                        self.gestures = GestureControl(self.settings, self._on_gesture, self._on_hand, self.camera)
                     self.gestures.start()
                 elif self.gestures is not None and self.gestures.running:
                     self.gestures.stop()
@@ -1231,6 +1240,8 @@ class Session:
     def shutdown(self):
         if self.gestures is not None:
             self.gestures.stop()
+        self.wellbeing.stop()
+        self.camera.stop()
         self.mic.close()
         self.scheduler.stop()
         if self.consolidator:

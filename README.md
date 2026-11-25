@@ -288,6 +288,29 @@ APK from its Releases, then on the PC open ⚙ → Connections → **My phone** 
 - Prefer not to install an app? [mobile-mcp](https://github.com/mobile-next/mobile-mcp) works as an MCP server under
   Connections → Apps while the phone is connected over (wireless) ADB.
 
+## Presence, health nudges and the weekly life report (v0.10.0)
+
+Settings → **Presence**. Everything here stays on this PC.
+
+- **At the desk** (webcam, off until you turn it on). Press **Learn my face** and look at the camera for 8 seconds.
+  Jarvis then greets you when you sit down (first time today, or after 20+ minutes away), **locks the PC** when you
+  walk away (no face and no keyboard/mouse for 45 s), and when **someone else sits down** while you're away it says
+  hello, locks the PC and posts an alert (mirrored to your paired phone). If someone looks over your shoulder you get
+  a quiet notice instead. Faces are found with OpenCV YuNet and recognised with SFace on the CPU; your face is stored
+  only as numbers in `~/.jarvis/presence/owner.npz`, never as a photo, and never sent to the AI model. "Forget my face"
+  deletes it. Visitor photos are opt-in (30 days, `~/.jarvis/presence/visitors`).
+- **One camera stream.** Hand gestures and Presence share a single webcam stream (`camera.py`), so they can both be on.
+- **Health nudges**: posture (slouching, leaning in, tilting or craning for 3+ minutes, compared with a "sit up
+  straight" baseline you calibrate), 20-20-20 eye breaks, water every hour at the desk ("I drank some water" resets it),
+  and a bedtime nudge. Short spoken lines, at most one every 15 minutes, never in meetings or quiet hours (the bedtime
+  nudge excepted). Without the camera, screen time comes from keyboard and mouse activity.
+- **Weekly life report**: once a minute Jarvis notes which app is in front (its name and a category like coding or
+  meetings, never the window title) in `~/.jarvis/life.db`. Every Sunday at 19:00 it reads you a short report in its
+  own voice: where the time went, your goals and habits, water, posture, overnight time off the PC, compared with the
+  week before. Set goals by talking ("I want to exercise 3 times a week", "code at most 40 hours a week", "8 glasses of
+  water a day") and log habits ("I went for a run"). Ask "how was my week?" any time. Reports are saved as Markdown
+  in `~/.jarvis/reports`. Only the totals go to the model to phrase it.
+
 ## Long-term memory (knowledge graph)
 
 Jarvis builds a personal knowledge graph in an embedded graph database

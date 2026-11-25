@@ -6,8 +6,8 @@
     swipe left/right   switch windows
     swipe up/down      maximise / minimise the active window
 
-The camera loop runs on its own thread at ~15 fps (slower while no hand is in view). Frames never leave the
-computer and nothing is recorded: each frame is turned into 21 hand points and dropped.
+Frames come from the shared webcam stream (camera.py) at ~15 fps (slower while no hand is in view), the same stream
+Presence uses. Frames never leave the computer and nothing is recorded: each frame becomes 21 hand points and is dropped.
 `GestureClassifier` is pure logic over those points so it can be unit-tested without a camera.
 """
 from __future__ import annotations
@@ -198,144 +198,127 @@ def ensure_model() -> Path:
     return MODEL_PATH
 
 
-# --------------------------------------------------------------------------- camera loop
+# --------------------------------------------------------------------------- camera consumer
 class GestureControl:
-    """Owns the webcam and the hand tracker. Calls on_gesture(name) and on_hand(dict | None)."""
+    """The hand tracker. Reads frames from the shared CameraHub (camera.py) and calls on_gesture(name) and
+    on_hand(dict | None). Presence (face at the desk, posture) uses the same camera stream at the same time."""
 
     FPS_ACTIVE = 15
     FPS_IDLE = 6          # no hand for a while: look less often
     IDLE_AFTER = 6.0
 
-    def __init__(self, settings: dict, on_gesture, on_hand):
+    def __init__(self, settings: dict, on_gesture, on_hand, hub=None):
+        from .camera import CameraHub
         self.settings = settings
         self.on_gesture = on_gesture
         self.on_hand = on_hand
+        self.hub = hub or CameraHub(settings)
         self.clf = GestureClassifier(self._cfg().get("sensitivity", 0.5))
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self.camera = int(self._cfg().get("camera", 0) or 0)
+        self._tracker = None
+        self._loader: threading.Thread | None = None
+        self._wanted = False
         self.state = "off"           # off | loading | downloading | running | error
         self.error = ""
-        self.fps = 0.0
         self.last_gesture = ""
         self.last_gesture_at = 0.0
         self.hand_visible = False
+        self._t0 = time.monotonic()
+        self._last_ts = -1
+        self._last_hand_emit = 0.0
+        self._frames: deque = deque(maxlen=30)
+        self.fps = 0.0
 
     def _cfg(self) -> dict:
         return self.settings.get("gestures") or {}
 
     @property
+    def camera(self) -> int:
+        return self.hub.camera
+
+    @property
     def running(self) -> bool:
-        return bool(self._thread and self._thread.is_alive())
+        return self._wanted
 
     def start(self):
-        if self.running:
+        if self._wanted:
+            self.hub.sync()
             return
-        self._stop.clear()
-        self.camera = int(self._cfg().get("camera", 0) or 0)
-        self._thread = threading.Thread(target=self._run, name="gestures", daemon=True)
-        self._thread.start()
+        self._wanted = True
+        if self._tracker is not None:
+            self.hub.add("gestures", self._frame, self.FPS_ACTIVE)
+            self.state = "running"
+            return
+        self._loader = threading.Thread(target=self._load, name="gestures-load", daemon=True)
+        self._loader.start()
 
-    def stop(self):
-        self._stop.set()
-        t = self._thread
-        if t and t.is_alive() and t is not threading.current_thread():
-            t.join(timeout=3)
-        self._thread = None
-        self.state, self.fps = "off", 0.0
-
-    def status(self) -> dict:
-        return {"state": self.state, "error": self.error, "fps": round(self.fps, 1), "camera": self.camera,
-                "model_ready": model_ready(), "last_gesture": self.last_gesture,
-                "last_gesture_ago": round(time.time() - self.last_gesture_at, 1) if self.last_gesture_at else None,
-                "hand_visible": self.hand_visible}
-
-    def _open_camera(self):
-        import cv2
-        backend = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
-        cap = cv2.VideoCapture(self.camera, backend)
-        if not cap.isOpened():
-            cap.release()
-            cap = cv2.VideoCapture(self.camera)
-        if not cap.isOpened():
-            raise RuntimeError(f"couldn't open camera {self.camera} (no webcam found, or another app is using it)")
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        return cap
-
-    def _run(self):
+    def _load(self):
         try:
             self.state, self.error = "loading", ""
             if not model_ready():
                 self.state = "downloading"
                 ensure_model()
-            import cv2
-            import mediapipe as mp
             from mediapipe.tasks.python import BaseOptions, vision
             opts = vision.HandLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=str(MODEL_PATH)),
                 running_mode=vision.RunningMode.VIDEO, num_hands=1,
                 min_hand_detection_confidence=0.6, min_hand_presence_confidence=0.5, min_tracking_confidence=0.5)
-            tracker = vision.HandLandmarker.create_from_options(opts)
+            self._tracker = vision.HandLandmarker.create_from_options(opts)
         except Exception as e:  # noqa: BLE001
             self.state, self.error = "error", f"{type(e).__name__}: {e}"
+            self._wanted = False
             print(f"[jarvis] gestures unavailable: {self.error}")
             return
-        cap = None
-        t_start = time.monotonic()
-        last_ts = -1
-        last_hand_emit = 0.0
-        frames: deque = deque(maxlen=30)
-        try:
-            while not self._stop.is_set():
-                if cap is None:
-                    try:
-                        cap = self._open_camera()
-                        self.state, self.error = "running", ""
-                    except Exception as e:  # noqa: BLE001
-                        self.state, self.error = "error", str(e)
-                        self._stop.wait(5)
-                        continue
-                tick = time.monotonic()
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    cap.release()
-                    cap = None
-                    self.state, self.error = "error", "the camera stopped sending pictures"
-                    self._stop.wait(2)
-                    continue
-                frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
-                ts = int((tick - t_start) * 1000)
-                ts = max(ts, last_ts + 1)
-                last_ts = ts
-                res = tracker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), ts)
-                lm = [(p.x, p.y, p.z) for p in res.hand_landmarks[0]] if res.hand_landmarks else None
-                self.clf.set_sensitivity(self._cfg().get("sensitivity", 0.5))
-                fired = self.clf.update(lm, tick)
-                was_visible, self.hand_visible = self.hand_visible, lm is not None
-                if lm is not None and tick - last_hand_emit >= 1 / 15:
-                    last_hand_emit = tick
-                    self._safe(self.on_hand, dict(self.clf.hand or {}))
-                elif was_visible and lm is None:
-                    self._safe(self.on_hand, None)
-                for g in fired:
-                    if g != "lost":
-                        self.last_gesture, self.last_gesture_at = g, time.time()
-                    self._safe(self.on_gesture, g)
-                frames.append(tick)
-                if len(frames) > 1:
-                    self.fps = (len(frames) - 1) / max(1e-3, frames[-1] - frames[0])
-                idle = self.clf.last_seen is None or tick - self.clf.last_seen > self.IDLE_AFTER
-                period = 1 / (self.FPS_IDLE if idle else self.FPS_ACTIVE)
-                self._stop.wait(max(0.0, period - (time.monotonic() - tick)))
-        finally:
-            if cap is not None:
-                cap.release()
+        if self._wanted:
+            self.hub.add("gestures", self._frame, self.FPS_ACTIVE)
+            self.state = "running"
+
+    def stop(self):
+        self._wanted = False
+        self.hub.remove("gestures")
+        tr, self._tracker = self._tracker, None
+        if tr is not None:
             try:
-                tracker.close()
+                tr.close()
             except Exception:  # noqa: BLE001
                 pass
-            self.hand_visible = False
+        self.state, self.fps, self.hand_visible = "off", 0.0, False
+        self.clf.reset()
+
+    def status(self) -> dict:
+        state, error = self.state, self.error
+        if state == "running" and self.hub.state == "error":
+            state, error = "error", self.hub.error
+        return {"state": state, "error": error, "fps": round(self.fps, 1), "camera": self.camera,
+                "model_ready": model_ready(), "last_gesture": self.last_gesture,
+                "last_gesture_ago": round(time.time() - self.last_gesture_at, 1) if self.last_gesture_at else None,
+                "hand_visible": self.hand_visible}
+
+    def _frame(self, frame, tick: float) -> float | None:
+        tracker = self._tracker
+        if tracker is None:
+            return None
+        import mediapipe as mp
+        ts = max(int((tick - self._t0) * 1000), self._last_ts + 1)
+        self._last_ts = ts
+        res = tracker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), ts)
+        lm = [(p.x, p.y, p.z) for p in res.hand_landmarks[0]] if res.hand_landmarks else None
+        self.clf.set_sensitivity(self._cfg().get("sensitivity", 0.5))
+        fired = self.clf.update(lm, tick)
+        was_visible, self.hand_visible = self.hand_visible, lm is not None
+        if lm is not None and tick - self._last_hand_emit >= 1 / 15:
+            self._last_hand_emit = tick
+            self._safe(self.on_hand, dict(self.clf.hand or {}))
+        elif was_visible and lm is None:
+            self._safe(self.on_hand, None)
+        for g in fired:
+            if g != "lost":
+                self.last_gesture, self.last_gesture_at = g, time.time()
+            self._safe(self.on_gesture, g)
+        self._frames.append(tick)
+        if len(self._frames) > 1:
+            self.fps = (len(self._frames) - 1) / max(1e-3, self._frames[-1] - self._frames[0])
+        idle = self.clf.last_seen is None or tick - self.clf.last_seen > self.IDLE_AFTER
+        return self.FPS_IDLE if idle else self.FPS_ACTIVE
 
     @staticmethod
     def _safe(fn, *a):

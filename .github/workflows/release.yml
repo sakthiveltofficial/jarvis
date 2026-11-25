@@ -61,6 +61,10 @@ jobs:
           $g = Invoke-RestMethod "http://127.0.0.1:8799/api/gestures?check=true"
           $g | ConvertTo-Json -Depth 4
           if ($g.deps -ne "ok") { Stop-Process -Id $p.Id -Force; throw "hand tracker missing from the frozen backend: $($g.deps)" }
+          $pr = Invoke-RestMethod "http://127.0.0.1:8799/api/presence?check=true"
+          $pr | ConvertTo-Json -Depth 5
+          if ($pr.deps -ne "ok") { Stop-Process -Id $p.Id -Force; throw "face engine missing from the frozen backend: $($pr.deps)" }
+          Invoke-RestMethod http://127.0.0.1:8799/api/life/stats | ConvertTo-Json -Depth 4
           Stop-Process -Id $p.Id -Force
           if (-not $ok) { Get-Content "$env:RUNNER_TEMP\backend.log","$env:RUNNER_TEMP\backend.err"; throw "frozen backend did not start" }
 
