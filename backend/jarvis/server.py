@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import audio, config, homeassistant, models, nodes, skills, voiceclone
+from . import audio, config, homeassistant, hud, models, nodes, skills, voiceclone
 from .agent import Session
 from .speech import TTS, to_wav_bytes
 
@@ -172,6 +172,38 @@ async def ha_devices():
         return {"devices": await asyncio.to_thread(session.home.devices), "configured": True}
     except Exception as e:  # noqa: BLE001
         return {"devices": [], "configured": True, "error": str(e)}
+
+
+# --------------------------------------------------------------------------- v0.8: screen HUD, hand gestures
+@app.get("/api/hud/stats")
+async def hud_stats():
+    return await asyncio.to_thread(hud.STATS.read)
+
+
+@app.get("/api/gestures")
+def gestures_status(check: bool = False):
+    st = dict(session.gesture_status())
+    if check:                 # can the hand tracker load here? (the release build smoke-tests this)
+        try:
+            import importlib
+            for mod in ("cv2", "mediapipe.tasks.python.vision"):
+                importlib.import_module(mod)
+            st["deps"] = "ok"
+        except Exception as e:  # noqa: BLE001
+            st["deps"] = f"{type(e).__name__}: {e}"
+    return st
+
+
+@app.post("/api/hud/test")
+def hud_test():
+    """Show a sample pointer in the middle of the primary screen so you can see the HUD is working."""
+    try:
+        m = session.runtime.monitors()[1]
+        x, y = m["left"] + m["width"] // 2, m["top"] + m["height"] // 2
+    except Exception:  # noqa: BLE001
+        x, y = 600, 400
+    session.emit({"type": "hud", "kind": "point", "x": x, "y": y, "label": "HUD online", "seconds": 4})
+    return {"ok": True, "x": x, "y": y}
 
 
 @app.post("/api/reset")

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis HUD</title>
+  <style>
+    :root {
+      --cyan: #4fd8ff; --cyan-dim: rgba(79, 216, 255, 0.35); --amber: #ffb347; --red: #ff5c6c;
+      --panel: rgba(6, 18, 28, 0.62); --line: rgba(79, 216, 255, 0.45); --text: #d9f6ff;
+      --mono: "Cascadia Mono", "Consolas", "SF Mono", "Menlo", monospace;
+    }
+    html, body { margin: 0; height: 100%; background: transparent !important; overflow: hidden; }
+    body { font-family: var(--mono); color: var(--text); user-select: none; pointer-events: none; }
+    canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+    #panel {
+      position: fixed; top: 18px; right: 18px; width: 260px; padding: 12px 14px 12px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 4px;
+      box-shadow: 0 0 24px rgba(79, 216, 255, 0.18), inset 0 0 18px rgba(79, 216, 255, 0.08);
+      clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+      opacity: 0; transform: translateX(16px); transition: opacity .35s ease, transform .35s ease;
+      font-size: 11px; letter-spacing: .06em;
+    }
+    #panel.on { opacity: 1; transform: none; }
+    #panel .hd { display: flex; justify-content: space-between; align-items: baseline; color: var(--cyan); margin-bottom: 8px; }
+    #panel .hd b { font-size: 13px; letter-spacing: .32em; }
+    #panel .hd span { color: var(--text); opacity: .8; }
+    .gauges { display: flex; gap: 10px; justify-content: space-between; }
+    .gauge { position: relative; width: 74px; height: 74px; }
+    .gauge svg { width: 74px; height: 74px; transform: rotate(-90deg); }
+    .gauge .v { position: absolute; inset: 0; display: grid; place-items: center; font-size: 15px; color: #fff; }
+    .gauge .l { position: absolute; bottom: -2px; width: 100%; text-align: center; font-size: 9px; opacity: .75; }
+    .row { display: flex; justify-content: space-between; margin-top: 7px; border-top: 1px solid rgba(79,216,255,.15); padding-top: 6px; }
+    .row i { font-style: normal; opacity: .7; }
+    #state { color: var(--amber); text-transform: uppercase; }
+    #task { margin-top: 6px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 14px; }
+    #plan { margin: 6px 0 0; padding: 0; list-style: none; max-height: 120px; overflow: hidden; }
+    #plan li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .75; padding: 1px 0; }
+    #plan li.in_progress { color: var(--amber); opacity: 1; }
+    #plan li.done { color: var(--cyan); opacity: .55; }
+    #plan li.failed { color: var(--red); }
+    #cores { display: flex; gap: 2px; height: 16px; align-items: flex-end; margin-top: 6px; }
+    #cores div { flex: 1; background: var(--cyan-dim); min-height: 1px; }
+    #toast {
+      position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%) translateY(10px); opacity: 0;
+      padding: 7px 16px; background: var(--panel); border: 1px solid var(--line); color: var(--cyan);
+      font-size: 12px; letter-spacing: .18em; text-transform: uppercase; transition: opacity .25s, transform .25s;
+      clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+    }
+    #toast.on { opacity: 1; transform: translateX(-50%); }
+  </style>
+</head>
+<body>
+  <canvas id="fx"></canvas>
+  <div id="panel">
+    <div class="hd"><b>J.A.R.V.I.S</b><span id="clock">--:--:--</span></div>
+    <div class="gauges">
+      <div class="gauge"><svg viewBox="0 0 74 74"><circle cx="37" cy="37" r="31" stroke="rgba(79,216,255,.15)" stroke-width="5" fill="none"/><circle id="g-cpu" cx="37" cy="37" r="31" stroke="#4fd8ff" stroke-width="5" fill="none" stroke-dasharray="0 999"/></svg><div class="v" id="v-cpu">–</div><div class="l">CPU</div></div>
+      <div class="gauge"><svg viewBox="0 0 74 74"><circle cx="37" cy="37" r="31" stroke="rgba(79,216,255,.15)" stroke-width="5" fill="none"/><circle id="g-ram" cx="37" cy="37" r="31" stroke="#4fd8ff" stroke-width="5" fill="none" stroke-dasharray="0 999"/></svg><div class="v" id="v-ram">–</div><div class="l">MEMORY</div></div>
+      <div class="gauge"><svg viewBox="0 0 74 74"><circle cx="37" cy="37" r="31" stroke="rgba(79,216,255,.15)" stroke-width="5" fill="none"/><circle id="g-bat" cx="37" cy="37" r="31" stroke="#ffb347" stroke-width="5" fill="none" stroke-dasharray="0 999"/></svg><div class="v" id="v-bat">–</div><div class="l" id="l-bat">POWER</div></div>
+    </div>
+    <div id="cores"></div>
+    <div class="row"><i>NET ▲</i><span id="v-up">–</span><i>▼</i><span id="v-down">–</span></div>
+    <div class="row"><i>STATUS</i><span id="state">standby</span></div>
+    <div id="task"></div>
+    <ul id="plan"></ul>
+  </div>
+  <div id="toast"></div>
+  <script src="hud.js"></script>
+</body>
+</html>

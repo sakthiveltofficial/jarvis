@@ -156,6 +156,35 @@ and feeling:
 5,000-particle, 30 fps low-power mode on battery, on 4-core machines, or when the first seconds run slowly.
 Without WebGL the app quietly keeps the glow.
 
+## Screen HUD and hand gestures (desktop)
+
+**Screen HUD** (⚙ → Desktop, on by default). A transparent, Iron Man style layer over every monitor:
+
+- **Shows what Jarvis does.** A lock-on reticle wherever it clicks, drags or scrolls, a scan line sweeping the
+  screen when it takes a screenshot, the keys it presses (never the text it types), and glowing corner brackets
+  while it's working.
+- **Teaches you.** Ask "show me how to export this as PDF" and Jarvis points instead of clicking: an animated
+  arrow and a caption on each button, one step at a time (the `point` tool).
+- **Live stats.** CPU (with per-core bars), memory, network, battery, the current step and the plan, in the top
+  right corner of your main screen: only while Jarvis is working, or always.
+- **Never in the way.** The overlay is click-through, stays off the taskbar, and is excluded from screen capture,
+  so it doesn't appear in Jarvis's own screenshots or when you share your screen.
+
+**Hand gestures** (⚙ → Desktop, off until you turn it on). Your normal webcam and MediaPipe hand tracking,
+running on the CPU at about 15 frames a second (slower while no hand is in view):
+
+| Gesture | What happens |
+| --- | --- |
+| ✋ open palm, hold ½ s | wake Jarvis (or stop it talking). With the mic off, it listens while your palm is up |
+| ✊ fist, hold ½ s | stop what Jarvis is doing |
+| 🤏 pinch and move | spin the orb; a quick pinch shows or hides the Jarvis window |
+| swipe left / right | switch windows (Alt+Esc on Windows) |
+| swipe up / down | maximise / minimise the active window |
+
+The orb leans toward your hand, blooms on a palm and shrinks on a fist; the HUD shows a cursor where your hand is.
+Frames never leave the PC and nothing is recorded: each one becomes 21 hand points and is dropped. The first start
+downloads the 7.5 MB hand model to `~/.jarvis/models/gestures/`.
+
 ## Always ready: "Hey Jarvis"
 
 The default listening mode is the wake word. Jarvis runs the open-source

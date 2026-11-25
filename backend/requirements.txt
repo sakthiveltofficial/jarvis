@@ -31,3 +31,6 @@ playwright>=1.48
 # phone companion (pairing QR, encrypted link)
 qrcode>=7.4
 cryptography>=42
+# screen HUD + hand gestures (webcam hand tracking on the CPU)
+mediapipe>=0.10.20
+opencv-contrib-python>=4.8

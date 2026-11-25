@@ -233,6 +233,9 @@
       task: null, taskUntil: 0, flash: 0, morphStart: 0, morphDur: 1.4, spin: 0,
       face: 0, cur: { c1: new THREE.Color(), c2: new THREE.Color(), c3: new THREE.Color(), speed: 0.8, turb: 0.6, spark: 0.06, swirl: 0 },
       running: true, last: performance.now(), t: 0, frames: [], fpsChecked: false,
+      // hand gestures (webcam): the orb leans toward your hand, pinch-and-move spins it, palm/fist pulse it
+      hand: null, handAt: 0, grab: null, rotX: 0, rotY: 0, velX: 0, velY: 0, bloom: 0, squeeze: 0,
+      lean: new THREE.Vector3(),
     };
 
     function build(n) {
@@ -404,8 +407,30 @@
       uniforms.uFlash.value = Math.min(0.85, S.flash * (0.6 + 0.4 * Math.sin(S.t * 30)));
       uniforms.uSize.value = S.lowPower ? 10 : 7;
       uniforms.uC1.value.copy(S.cur.c1); uniforms.uC2.value.copy(S.cur.c2); uniforms.uC3.value.copy(S.cur.c3);
+      handMotion(dt, now);
       renderer.render(scene, camera);
     }
+    // ------------------------------------------------------------ hand gestures
+    const leanTo = new THREE.Vector3();
+    function handMotion(dt, now) {
+      const h = S.hand && now - S.handAt < 500 ? S.hand : null;
+      if (h && h.pinch) {                       // grab and spin: hand movement becomes spin velocity
+        if (S.grab) { S.velY += (h.x - S.grab.x) * 55; S.velX += (h.y - S.grab.y) * 40; }
+        S.grab = { x: h.x, y: h.y };
+      } else S.grab = null;
+      S.rotY += S.velY * dt; S.rotX += S.velX * dt;
+      const damp = Math.exp(-dt * (S.grab ? 6 : 1.6));
+      S.velX *= damp; S.velY *= damp;
+      if (!S.grab) S.rotX *= Math.exp(-dt * 0.8);   // tilt settles back, spin keeps its angle
+      S.bloom *= Math.exp(-dt * 2.2); S.squeeze *= Math.exp(-dt * 2.8);
+      if (h) leanTo.set((h.x - 0.5) * 0.9, -(h.y - 0.5) * 0.6, 0); else leanTo.set(0, 0, 0);
+      S.lean.lerp(leanTo, 1 - Math.exp(-dt * 3));
+      if (!points) return;
+      points.rotation.set(S.rotX, S.rotY, 0);
+      points.position.copy(S.lean);
+      points.scale.setScalar(1 + 0.28 * Math.sin(Math.min(1, S.bloom) * Math.PI / 2) - 0.3 * S.squeeze);
+    }
+
     const onVis = () => { S.running = !document.hidden; S.last = performance.now(); };
     document.addEventListener("visibilitychange", onVis);
     // start with the right colours rather than fading in from black
@@ -420,6 +445,16 @@
       aiMood(m) { if (MOODS[m]) { S.aiMood = m; S.aiAt = performance.now() / 1000; } },
       task(tool, seconds = 2.4) { S.task = taskShape(tool); S.taskUntil = performance.now() / 1000 + seconds; },
       flash() { S.flash = 1; },
+      hand(h) { S.hand = h || null; S.handAt = performance.now(); },
+      gesture(g) {
+        if (g === "palm") S.bloom = 1;
+        else if (g === "fist") { S.squeeze = 1; S.velX = S.velY = 0; }
+        else if (g === "swipe_left") S.velY -= 5;
+        else if (g === "swipe_right") S.velY += 5;
+        else if (g === "swipe_up") S.velX -= 4;
+        else if (g === "swipe_down") S.velX += 4;
+        else if (g === "pinch_tap") S.bloom = 0.5;
+      },
       setTheme(t) { S.theme = t === "dark" ? "dark" : "light"; applyTheme(); },
       setQuality(q) { S.quality = q || "auto"; applyQuality(); },
       get info() { return { shape: S.shape, state: S.state, particles: count, lowPower: S.lowPower, mood: targetLook() }; },
