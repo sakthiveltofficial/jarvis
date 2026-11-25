@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import audio, config, models, nodes, skills
+from . import audio, config, homeassistant, models, nodes, skills, voiceclone
 from .agent import Session
 from .speech import TTS, to_wav_bytes
 
@@ -112,6 +112,66 @@ async def tts_test(body: dict):
     if body.get("play", True):
         session.speak(text)
     return {"wav_b64": base64.b64encode(to_wav_bytes(samples, sr)).decode(), "seconds": len(samples) / sr}
+
+
+# --------------------------------------------------------------------------- v0.7: custom voice, smart home
+@app.get("/api/voice/clone")
+async def clone_status():
+    return await asyncio.to_thread(voiceclone.status, session.settings)
+
+
+@app.post("/api/voice/sample")
+async def clone_sample(body: dict):
+    """{audio_b64, text}: upload a voice sample (any common audio format) and/or what is said in it."""
+    try:
+        data = base64.b64decode(body["audio_b64"]) if body.get("audio_b64") else None
+        return await asyncio.to_thread(voiceclone.save_sample, data, body.get("text"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/voice/record")
+async def clone_record(body: dict):
+    try:
+        return await asyncio.to_thread(voiceclone.record, float(body.get("seconds", 15)),
+                                       session.settings["audio"].get("input_device"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/voice/sample")
+def clone_sample_get():
+    if not voiceclone.SAMPLE.exists():
+        raise HTTPException(404, "no sample")
+    return {"wav_b64": base64.b64encode(voiceclone.SAMPLE.read_bytes()).decode(), **voiceclone.info()}
+
+
+@app.delete("/api/voice/sample")
+def clone_sample_delete():
+    voiceclone.delete_sample()
+    return voiceclone.info()
+
+
+@app.post("/api/homeassistant/test")
+async def ha_test(body: dict):
+    """Test the URL/token typed in Settings (a masked token means "the saved one")."""
+    saved = session.settings.get("home_assistant") or {}
+    tok = body.get("token")
+    cfg = {**saved, **{k: v for k, v in body.items() if v is not None}}
+    if not tok or str(tok).startswith("••••"):
+        cfg["token"] = saved.get("token", "")
+    ha = homeassistant.HomeAssistant({"home_assistant": cfg})
+    return await asyncio.to_thread(ha.test)
+
+
+@app.get("/api/homeassistant/devices")
+async def ha_devices():
+    if not homeassistant.configured(session.settings):
+        return {"devices": [], "configured": False}
+    try:
+        return {"devices": await asyncio.to_thread(session.home.devices), "configured": True}
+    except Exception as e:  # noqa: BLE001
+        return {"devices": [], "configured": True, "error": str(e)}
 
 
 @app.post("/api/reset")

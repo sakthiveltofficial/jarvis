@@ -27,7 +27,7 @@ import httpx
 from . import config
 
 PROTOCOL = "2025-06-18"
-CLIENT_INFO = {"name": "jarvis", "version": "0.6.0"}
+CLIENT_INFO = {"name": "jarvis", "version": "0.7.0"}
 READ_VERBS = re.compile(r"^(get|list|search|read|fetch|query|find|describe|show|view|retrieve|lookup|check)", re.I)
 LOG_DIR = config.HOME / "logs"
 

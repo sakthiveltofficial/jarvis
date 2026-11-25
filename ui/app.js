@@ -39,7 +39,7 @@ function onEvent(ev) {
     case "level": targetLevel = ev.value; break;
     case "handsfree": handsfree = ev.on; break;
     case "voice_mode": voiceMode = ev.mode; wakeReady = ev.wake_ready; renderHandsfree(); break;
-    case "wake": $("t-voice-tile").classList.add("awake"); $("voice-mode").textContent = "I'm listening…"; break;
+    case "wake": $("t-voice-tile").classList.add("awake"); $("voice-mode").textContent = ev.source === "clap" ? "👏 I'm listening…" : "I'm listening…"; break;
     case "wake_sleep": $("t-voice-tile").classList.remove("awake"); renderHandsfree(); break;
     case "mood": renderMood(ev); break;
     case "plan": if (ev.agent === "main") { agenda.plan = ev.plan; renderAgenda(); } break;
@@ -85,7 +85,7 @@ function setStatus() {
 function addMsg(kind, text, proactive) {
   const d = document.createElement("div");
   d.className = "msg " + kind + (proactive ? " proactive" : "");
-  if (proactive) d.title = { reminder: "Reminder", offer: "I noticed something on your screen", background: "Background task", teach: "Teach mode", skill: "New skill" }[proactive] || proactive;
+  if (proactive) d.title = { reminder: "Reminder", offer: "Said on my own", clap: "You clapped", background: "Background task", teach: "Teach mode", skill: "New skill" }[proactive] || proactive;
   d.textContent = text;
   if (kind === "user" || kind === "assistant") $("convo-count").textContent = `${++msgCount} messages`;
   $("transcript").appendChild(d);
@@ -162,7 +162,8 @@ $("btn-handsfree").onclick = () => setMode(MODES[(MODES.indexOf(voiceMode) + 1) 
 document.querySelectorAll("#voice-seg button").forEach((b) => b.onclick = () => setMode(b.dataset.mode));
 function renderHandsfree() {
   const name = settings?.assistant_name || "Jarvis";
-  const label = { off: "push to talk", wake: wakeReady ? `say “Hey ${name}”` : `say “${name}…”`, handsfree: "always listening" }[voiceMode];
+  const clap = settings?.voice?.clap !== false ? " or clap twice" : "";
+  const label = { off: "push to talk", wake: (wakeReady ? `say “Hey ${name}”` : `say “${name}…”`) + clap, handsfree: "always listening" }[voiceMode];
   $("btn-handsfree").classList.toggle("on", voiceMode !== "off");
   $("btn-handsfree").title = `Listening: ${label} (click to change)`;
   $("hf-label").textContent = label;
@@ -426,7 +427,7 @@ function renderLabels() {
   $("brand-name").textContent = settings.assistant_name || "Jarvis";
   $("model-label").textContent = settings.llm.model || settings.llm.provider;
   const stt = settings.stt.provider === "local_whisper" ? `Whisper ${settings.stt.local_model}` : settings.stt.provider;
-  const tts = { piper: "Piper", kokoro: "Kokoro", elevenlabs: "ElevenLabs", fish_audio: "Fish Audio", openai: "OpenAI", none: "silent" }[settings.tts.provider] || settings.tts.provider;
+  const tts = { piper: "Piper", kokoro: "Kokoro", clone: "custom voice", elevenlabs: "ElevenLabs", fish_audio: "Fish Audio", openai: "OpenAI", none: "silent" }[settings.tts.provider] || settings.tts.provider;
   $("stt-label").textContent = "hear · " + stt;
   $("tts-label").textContent = "speak · " + tts;
   const mode = settings.agent.confirm_mode;
@@ -496,6 +497,12 @@ async function openSettings() {
   $("tts-el-voice").value = s.tts.elevenlabs_voice_id || ""; $("tts-fish").value = s.tts.fish_reference_id || "";
   $("tts-oa-voice").value = s.tts.openai_voice || ""; $("tts-speed").value = s.tts.speed;
   for (const k of ["elevenlabs", "fish_audio", "openai", "groq"]) $("key-" + k).value = s.api_keys[k] || "";
+  $("clone-engine").value = s.tts.clone_engine || "fish_speech"; $("clone-url").value = s.tts.clone_url || "";
+  $("clone-fallback").value = s.tts.clone_fallback || "piper";
+  const lg = s.language || {};
+  $("lang-mode").value = lg.mode || "ta_en"; $("lang-reply").value = lg.reply || "match";
+  $("lang-tvoice").value = lg.tamil_voice || "auto"; $("lang-edge").value = lg.edge_voice || "ta-IN-ValluvarNeural";
+  loadClone();
 
   const d = await (await fetch(API + "/api/audio/devices")).json();
   opt($("audio-in"), [{ value: "", label: "System default" }, ...d.inputs.map((x) => ({ value: x.id, label: x.name }))], s.audio.input_device ?? "");
@@ -522,6 +529,13 @@ async function openSettings() {
   $("pv-mode").value = v.mode || "wake"; $("pv-thr").value = v.wake_threshold ?? 0.5;
   $("pv-follow").value = v.follow_up_s ?? 10; $("pv-listen").value = v.listen_s ?? 8;
   $("pv-chime").checked = v.chime !== false; $("pv-emotion").checked = v.emotion !== false;
+  $("pv-clap").checked = v.clap !== false; $("pv-clap-s").value = v.clap_sensitivity ?? 0.5; $("pv-clap-ack").checked = v.clap_ack !== false;
+  const am = s.ambient || {};
+  $("am-on").checked = am.enabled !== false; $("am-quiet").checked = am.quiet_enabled !== false;
+  $("am-q-start").value = am.quiet_start || "23:00"; $("am-q-end").value = am.quiet_end || "07:00";
+  $("am-code").checked = am.coding_break !== false; $("am-code-h").value = am.coding_break_h ?? 2;
+  $("am-screen").checked = am.screen_break !== false; $("am-screen-h").value = am.screen_break_h ?? 3;
+  $("am-welcome").checked = am.welcome_back !== false; $("am-gap").value = am.min_gap_min ?? 45; $("am-late").checked = !!am.late_night;
   $("pv-selfcheck").checked = s.agent.self_check !== false;
   $("br-loc").value = br.location || "";
   for (const [k, id] of [["morning", "m"], ["evening", "e"]]) {
@@ -531,6 +545,9 @@ async function openSettings() {
   }
   $("aw-on").checked = !!aw.enabled; $("aw-int").value = aw.interval_s ?? 60; $("aw-cool").value = aw.cooldown_min ?? 10; $("aw-model").value = aw.model || "";
   $("mcp-json").value = JSON.stringify((s.mcp && s.mcp.servers) || [], null, 2);
+  const ha = s.home_assistant || {};
+  $("ha-on").checked = ha.enabled !== false; $("ha-url").value = ha.url || ""; $("ha-token").value = ha.token || "";
+  $("ha-ssl").checked = ha.verify_ssl !== false; $("ha-status").textContent = ""; $("ha-status").className = "hint";
   const ph = s.phones || {};
   $("phones-on").checked = !!ph.enabled; $("phones-port").value = ph.port || 8767; $("phones-hosts").value = (ph.extra_hosts || []).join(", ");
   $("node-on").checked = !!nd.enabled; $("node-name").value = nd.name || ""; $("node-port").value = nd.port || 8766; $("node-elev").checked = !!nd.allow_elevated;
@@ -564,7 +581,9 @@ function collect() {
       provider: $("tts-provider").value, piper_voice: $("tts-piper").value, kokoro_voice: $("tts-kokoro").value,
       elevenlabs_voice_id: $("tts-el-voice").value.trim(), fish_reference_id: $("tts-fish").value.trim(),
       openai_voice: $("tts-oa-voice").value.trim() || "onyx", speed: Number($("tts-speed").value || 1),
+      clone_engine: $("clone-engine").value, clone_url: $("clone-url").value.trim(), clone_fallback: $("clone-fallback").value,
     },
+    language: { mode: $("lang-mode").value, reply: $("lang-reply").value, tamil_voice: $("lang-tvoice").value, edge_voice: $("lang-edge").value },
     audio: { input_device: dev($("audio-in").value), output_device: dev($("audio-out").value), silence_ms: Number($("beh-silence").value || 900),
              barge_in: $("barge-on").checked, echo_gain: Number($("barge-echo").value || 0.6), barge_check_ms: Number($("barge-ms").value || 900) },
     memory: { auto_save: $("mem-auto").checked, consolidate: $("mem-cons").checked, consolidate_time: $("mem-cons-time").value || "03:00",
@@ -574,7 +593,13 @@ function collect() {
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
     voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), follow_up_s: Number($("pv-follow").value || 10),
-             listen_s: Number($("pv-listen").value || 8), chime: $("pv-chime").checked, emotion: $("pv-emotion").checked },
+             listen_s: Number($("pv-listen").value || 8), chime: $("pv-chime").checked, emotion: $("pv-emotion").checked,
+             clap: $("pv-clap").checked, clap_sensitivity: Number($("pv-clap-s").value || 0.5), clap_ack: $("pv-clap-ack").checked },
+    ambient: { enabled: $("am-on").checked, quiet_enabled: $("am-quiet").checked, quiet_start: $("am-q-start").value || "23:00",
+               quiet_end: $("am-q-end").value || "07:00", coding_break: $("am-code").checked, coding_break_h: Number($("am-code-h").value || 2),
+               screen_break: $("am-screen").checked, screen_break_h: Number($("am-screen-h").value || 3), welcome_back: $("am-welcome").checked,
+               min_gap_min: Number($("am-gap").value || 45), late_night: $("am-late").checked },
+    home_assistant: { enabled: $("ha-on").checked, url: $("ha-url").value.trim(), token: $("ha-token").value.trim(), verify_ssl: $("ha-ssl").checked },
     briefings: {
       location: $("br-loc").value.trim(),
       morning: { enabled: $("br-m-on").checked, time: $("br-m-time").value || "08:00", weekdays_only: $("br-m-wd").checked },
@@ -588,6 +613,55 @@ function collect() {
     nodes: pcs.filter((p) => p.name && p.url),
   };
 }
+
+// ------------------------------------------------------------------ custom voice sample + smart home test
+async function loadClone() {
+  const st = $("clone-status");
+  try {
+    const r = await (await fetch(API + "/api/voice/clone")).json();
+    if (document.activeElement !== $("clone-text")) $("clone-text").value = r.text || "";
+    const sample = r.has_sample ? `Sample: ${r.seconds}s${r.advice ? " — " + r.advice : ""}.` : "No sample yet.";
+    st.textContent = `${sample} ${r.message || ""}`;
+    st.className = "hint " + (r.has_sample && r.ready ? "ok" : r.has_sample ? "bad" : "");
+  } catch (e) { st.textContent = "Couldn't check the custom voice: " + e.message; }
+}
+async function postJson(path, body, method = "POST") {
+  const r = await fetch(API + path, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+$("clone-file").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  $("clone-status").textContent = "Saving sample…";
+  const b64 = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(",")[1]); fr.onerror = bad; fr.readAsDataURL(f); });
+  try { await postJson("/api/voice/sample", { audio_b64: b64, text: $("clone-text").value }); } catch (err) { $("clone-status").textContent = err.message; }
+  e.target.value = ""; loadClone();
+};
+$("clone-rec").onclick = async () => {
+  const b = $("clone-rec"); b.disabled = true;
+  let left = 15; const tick = setInterval(() => { b.textContent = `● Recording… ${--left}s`; }, 1000);
+  $("clone-status").textContent = "Read anything aloud in your natural voice…";
+  try { await postJson("/api/voice/record", { seconds: 15 }); } catch (err) { $("clone-status").textContent = err.message; }
+  clearInterval(tick); b.disabled = false; b.textContent = "● Record 15 s"; loadClone();
+};
+$("clone-play").onclick = async () => {
+  try { const r = await (await fetch(API + "/api/voice/sample")).json(); if (r.wav_b64) new Audio("data:audio/wav;base64," + r.wav_b64).play(); } catch (_) {}
+};
+$("clone-del").onclick = async () => { await postJson("/api/voice/sample", null, "DELETE"); loadClone(); };
+$("clone-text").onchange = () => postJson("/api/voice/sample", { text: $("clone-text").value }).catch(() => {});
+$("ha-test").onclick = async () => {
+  const st = $("ha-status"); st.className = "hint"; st.textContent = "Checking…";
+  try {
+    const r = await postJson("/api/homeassistant/test", { url: $("ha-url").value.trim(), token: $("ha-token").value.trim(), verify_ssl: $("ha-ssl").checked });
+    if (r.ok) {
+      const c = r.counts || {}, n = (k) => c[k] || 0;
+      st.textContent = `Connected${r.location ? " to " + r.location : ""}${r.version ? " (Home Assistant " + r.version + ")" : ""}: ` +
+        `${n("light")} lights, ${n("climate")} AC/thermostats, ${n("media_player")} TVs/speakers, ${n("switch")} switches, ${n("fan")} fans. Save to use it.`;
+      st.className = "hint ok";
+    } else { st.textContent = r.message; st.className = "hint bad"; }
+  } catch (e) { st.textContent = e.message; st.className = "hint bad"; }
+};
 
 // ------------------------------------------------------------------ connections: MCP apps + other PCs
 const MCP_TEMPLATES = {

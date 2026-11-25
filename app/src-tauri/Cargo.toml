@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.6.0"
+version = "0.7.0"
 description = "Jarvis — a voice-first AI companion that can use your computer"
 edition = "2021"
 

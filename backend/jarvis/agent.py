@@ -16,8 +16,9 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from . import config, emotion, llm, nodes, persona, phones, scheduler, skills, tools
+from . import config, emotion, homeassistant, lang, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
+from .ambient import Ambient
 from .consolidation import Consolidator
 from .files import FileIndex
 from .audio import Mic, Player
@@ -25,11 +26,13 @@ from .awareness import Awareness
 from .mcp_client import MCPManager
 from .speech import STT, TTS
 
-YES = re.compile(r"^\W*(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|confirm(ed)?|approved?|proceed|please do)\b", re.I)
+YES = re.compile(r"^\W*(yes|yeah|yep|sure|ok(ay)?|go( ahead)?|do it|confirm(ed)?|approved?|proceed|please do)\b"
+                 rf"|^\W*({lang.YES_TA})", re.I)
 BACKCHANNEL = set("""mm mhm mmhm hmm uh um huh yeah yep yes yup ok okay right sure cool nice wow oh ah
 uh-huh aha great alright got it i see true exactly totally indeed""".split())
-INTERRUPT_WORDS = re.compile(r"\b(stop|wait|hold on|hang on|jarvis|no no|cancel|enough|pause|shut up|excuse me|actually)\b", re.I)
-NO = re.compile(r"^\W*(no|nope|don'?t|stop|cancel|deny|negative|abort|wait)\b", re.I)
+INTERRUPT_WORDS = re.compile(r"\b(stop|wait|hold on|hang on|jarvis|no no|cancel|enough|pause|shut up|excuse me|actually)\b"
+                             rf"|{lang.STOP_TA}", re.I)
+NO = re.compile(r"^\W*(no|nope|don'?t|stop|cancel|deny|negative|abort|wait)\b" rf"|{lang.NO_TA}", re.I)
 STOP_TEACH = re.compile(r"\b(stop (teaching|watching|recording)|i'?m done|that'?s it|that'?s all|done teaching|finished)\b", re.I)
 PLANS_FILE = config.HOME / "plans.json"
 
@@ -58,8 +61,11 @@ def sentences(text: str) -> list[str]:
 
 
 def wake_regex(name: str) -> re.Pattern:
-    n = re.escape((name or "Jarvis").lower())
-    return re.compile(rf"^\W*((hey|hi|hello|ok|okay|yo)\W+)?{n}\b\W*", re.I)
+    low = (name or "Jarvis").lower()
+    n = re.escape(low)
+    ta = lang.NAME_TA.get(low)
+    alt = f"|{re.escape(ta)}" if ta else ""
+    return re.compile(rf"^\W*((hey|hi|hello|ok|okay|yo|டேய்|ஹே)\W+)?({n}\b{alt})[\W]*", re.I)
 
 
 # =========================================================================== agent loop
@@ -99,6 +105,8 @@ class Runner:
         out = tools.specs_for(self.p.vision, main=not self.background, nodes=bool(st.get("nodes")),
                               exclude=tools.GUI_TOOLS if self.background else None,
                               phones=bool((st.get("phones") or {}).get("devices")))
+        if homeassistant.configured(st):
+            out = out + [homeassistant.SPEC]
         return out + self.s.mcp.specs()
 
     async def call_tool(self, call: llm.ToolCall) -> tools.ToolOutput:
@@ -107,6 +115,8 @@ class Runner:
             return self.s.plan_tool(self.id, args)
         if self.s.mcp.is_mcp(name):
             return await asyncio.to_thread(self._safe, self.s.mcp.call, name, args)
+        if name == "smart_home":
+            return await asyncio.to_thread(self._safe, self.s.home.tool, args)
         if name in self.s.meta_tools:
             return await asyncio.to_thread(self._safe, self.s.meta_tools[name], args)
         return await self.s.loop.run_in_executor(self.pool, self.runtime.call, name, args)
@@ -122,6 +132,13 @@ class Runner:
         mode = self.s.settings["agent"].get("confirm_mode", "risky")
         if self.s.mcp.is_mcp(call.name):
             return self.s.mcp.risk(call.name, mode)
+        if call.name == "smart_home":
+            if mode == "never":
+                return None
+            a = call.args or {}
+            if mode == "always" and (a.get("action") or "") not in ("list", "state"):
+                return f"Change your smart home: {tools.describe('smart_home', a)}"
+            return self.s.home.risk(a)
         return tools.needs_confirmation(call.name, call.args, mode)
 
     # loop --------------------------------------------------------------------
@@ -196,7 +213,11 @@ class Session:
         self.runtime = tools.ToolRuntime(self.settings)
         self.runtime.vision = self.provider.vision
         self.main = Runner(self, self.provider, self.runtime, self.tool_pool)
-        self.mic = Mic(self.settings, self._on_mic_level, self._on_utterance, self._on_barge, self._on_wake)
+        self.mic = Mic(self.settings, self._on_mic_level, self._on_utterance, self._on_barge, self._on_wake,
+                       on_clap=self._on_clap)
+        self.last_lang = ""                     # language of the user's last message: ta | mixed | tanglish | en
+        self.home = homeassistant.HomeAssistant(self.settings)
+        TTS.notice = lambda msg: self.emit({"type": "info", "text": msg})
         self._now_speaking = ""
         self._mem_q: queue.Queue = queue.Queue()
         try:
@@ -257,6 +278,7 @@ class Session:
         threading.Thread(target=self._play_worker, daemon=True).start()
         threading.Thread(target=self._wake_watchdog, daemon=True).start()
         self.awareness = Awareness(self)
+        self.ambient = Ambient(self)
         STT.preload(self.settings)
         mode = self.settings.get("voice", {}).get("mode", "off")
         if mode != "off":
@@ -302,6 +324,9 @@ class Session:
                                                           self.settings.get("mcp", {}).get("servers") or [])
         if "nodes" in new:
             new["nodes"] = config.restore_masked(new["nodes"] or [], self.settings.get("nodes") or [])
+        ha = new.get("home_assistant")
+        if isinstance(ha, dict) and str(ha.get("token", "")).startswith("••••"):
+            ha["token"] = (self.settings.get("home_assistant") or {}).get("token", "")
         old_llm = dict(self.settings["llm"])
         merged = config.save(new)
         for k in ("mcp", "nodes"):           # lists replace rather than merge
@@ -323,6 +348,8 @@ class Session:
             self.files.sync()
         self._sync_phone_hub()
         self._sync_node_server()
+        self._sync_clap()
+        self.home._at = self.home._sum_at = 0.0
         self.emit({"type": "agenda"})
         STT.preload(self.settings)
 
@@ -346,6 +373,7 @@ class Session:
                 self.wake_ready = False
                 self.emit({"type": "info", "text": f"Wake word model unavailable ({e}); I'll listen for my name instead."})
         self.voice_mode = mode
+        self._sync_clap()
         try:
             self.mic.set_idle_mode(mode)
         except Exception as e:  # noqa: BLE001
@@ -362,16 +390,45 @@ class Session:
     def set_handsfree(self, on: bool):
         self.set_voice_mode("handsfree" if on else "off")
 
+    def _sync_clap(self):
+        """Double-clap wake: on whenever the mic is listening (wake word / always) and the setting is on."""
+        v = self.settings.get("voice", {})
+        if v.get("clap", True) and self.voice_mode != "off":
+            sens = float(v.get("clap_sensitivity", 0.5))
+            if self.mic.clap is None:
+                from .clap import ClapDetector
+                self.mic.clap = ClapDetector(sens)
+            else:
+                self.mic.clap.set_sensitivity(sens)
+        else:
+            self.mic.clap = None
+
+    def _on_clap(self):
+        """Double clap heard: like the wake word, but answer out loud (Iron Man style) when clap_ack is on."""
+        v = self.settings.get("voice", {})
+        ack = v.get("clap_ack", True) and self.settings["tts"].get("provider") != "none" \
+            and self.settings["agent"].get("speak_replies", True)
+        self._on_wake(source="clap", chime=not ack)
+        if ack:
+            from .clap import ack_line
+            line = ack_line()
+            if self.last_lang in ("ta", "mixed"):
+                line = "சொல்லுங்க?"
+            elif self.last_lang == "tanglish":
+                line = "Sollunga?"
+            self.emit({"type": "assistant", "text": line, "proactive": "clap"})
+            self.speak(line)
+
     def _follow_up(self) -> float:
         return float(self.settings.get("voice", {}).get("follow_up_s", 10))
 
-    def _on_wake(self):
-        """The wake word was heard: stop talking, chime, listen."""
+    def _on_wake(self, source: str = "word", chime: bool = True):
+        """The wake word (or a double clap) was heard: stop talking, chime, listen."""
         self.stop_speaking()
         self.engaged_until = time.time() + float(self.settings.get("voice", {}).get("listen_s", 8))
         self.set_state("listening")
-        self.emit({"type": "wake"})
-        if self.settings.get("voice", {}).get("chime", True):
+        self.emit({"type": "wake", "source": source})
+        if chime and self.settings.get("voice", {}).get("chime", True):
             from .wakeword import chime
             threading.Thread(target=lambda: Player(self.settings).play(chime(), 24000), daemon=True).start()
 
@@ -592,7 +649,7 @@ class Session:
 
     @staticmethod
     def is_interruption(text: str, speaking: str) -> tuple[bool, str]:
-        words = re.findall(r"[a-z']+", text.lower())
+        words = re.findall(r"[a-z']+|[\u0B80-\u0BFF]+", text.lower())
         if not words:
             return False, "no words (noise)"
         if INTERRUPT_WORDS.search(text):
@@ -674,18 +731,22 @@ class Session:
             "plan": self._plan_text(agent_id),
             "background_agent": background,
             "mood_tag": (self.settings.get("ui") or {}).get("orb", True),
+            "home": self.home.cached_summary() if homeassistant.configured(self.settings) else "",
+            "last_lang": lang.LABELS.get(self.last_lang, ""),
         }
         return persona.system_prompt(self.settings, vision, profile, ex)
 
     # ------------------------------------------------------------------ conversation
     async def handle_user(self, text: str, voice: bool = False, mood: dict | None = None, origin: str | None = None):
         """origin: None = this PC; a phone device id = reply through that phone; "-" = a phone that wants no audio."""
+        self.last_lang = lang.detect(text) or self.last_lang
         # A spoken yes/no answers a pending confirmation.
         if self.pending and voice:
             fid = next(iter(self.pending))
-            if YES.match(text) or NO.match(text):
+            no = bool(NO.match(text) or re.search(lang.NO_TA, text, re.I))
+            if YES.match(text) or no:
                 self.emit({"type": "user", "text": text})
-                self.resolve_confirm(fid, bool(YES.match(text)))
+                self.resolve_confirm(fid, not no)
                 return
         self.emit({"type": "user", "text": text})
         if self.teacher is not None:
@@ -1067,6 +1128,7 @@ class Session:
         if self.files:
             self.files.stop()
         self.awareness.stop()
+        self.ambient.stop()
         self.mcp.close()
         if self.node_server:
             self.node_server.stop()

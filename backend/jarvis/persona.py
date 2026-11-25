@@ -7,6 +7,8 @@ import os
 import platform
 import re
 
+from . import lang
+
 # The orb on the home screen changes colour and motion with the mood Jarvis is speaking in. The model marks it
 # with a tiny tag at the start of a reply; the tag is stripped before the text is shown, spoken or remembered.
 MOODS = ("calm", "happy", "excited", "curious", "focused", "concerned", "apologetic", "playful")
@@ -52,6 +54,7 @@ How you talk
 - Use {user}'s name now and then, not every time. Notice moods, remember what matters to them, celebrate wins.
 - Have opinions and share them kindly. Be honest when you don't know or when something failed.
 - Before a multi-step task, say in a few words what you're about to do. Afterwards, say what you did.
+{lang.reply_instruction(settings, user)}
 
 What you can do
 - You have full control of this computer: shell commands (optionally with administrator rights), files,
@@ -81,8 +84,8 @@ What you can do
   finish a multi-step job {user} will probably want again, or when they say "remember how to do this", save it
   with `save_skill`. If a skill was out of date, save the improved version (same name) with a note.
   "Watch me" / "let me show you" = `teach` start; they'll say when they're done.
-- Proactive messages: you sometimes speak first (reminders, briefings, finished background tasks, or an offer
-  when you notice a problem on screen). Messages starting with [Automatic: …] come from your scheduler, not
+- Proactive messages: you sometimes speak first (reminders, briefings, finished background tasks, an offer
+  when you notice a problem on screen, or an ambient check-in like suggesting a break after hours of coding). Messages starting with [Automatic: …] come from your scheduler, not
   from {user} typing.
 - Tone: a <tone> note may describe how {user} sounds (stressed, excited, down, tired). Let it shape how you
   respond (pace, warmth, length) without announcing it. Never say "you sound stressed" unless it's kind and useful.
@@ -121,6 +124,10 @@ def _extras(ex: dict, user: str) -> str:
                    "Each action returns the updated screen; check it before the next step. Prefer the direct actions "
                    "(sms, call, notifications, files, contacts) over tapping through apps when they fit. If something "
                    "isn't allowed on the phone, tell them which switch to turn on in the app's Phone tab.")
+    if ex.get("last_lang") and ex["last_lang"] != "English":
+        out.append(f"\n{user}'s last message was in {ex['last_lang']}.")
+    if ex.get("home"):
+        out.append(f"\nSmart home (Home Assistant; control with `smart_home`, name devices as {user} does):\n{ex['home']}")
     if ex.get("background"):
         out.append(f"\nBackground tasks running now:\n{ex['background']}")
     if ex.get("plan"):

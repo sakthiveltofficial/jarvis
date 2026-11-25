@@ -304,6 +304,14 @@ textarea { font: 12px/1.45 ui-monospace, "Cascadia Code", Menlo, Consolas, monos
 .qr-box { width: 168px; height: 168px; flex: none; background: #fff; border-radius: 14px; padding: 8px; display: grid; place-items: center; color: #17191a; font-size: 12px; text-align: center; }
 .qr-box svg { width: 100%; height: 100%; stroke: none; fill: #17191a; }
 .qr-side { min-width: 0; }
+/* v0.7: custom voice sample box */
+.clone-box { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; margin: 4px 0 8px; }
+.clone-box .row-btns { margin: 0; flex-wrap: wrap; align-items: center; }
+.clone-box .pill { padding: 6px 12px; font-size: 12px; }
+.file-pill input { display: none !important; }
+.file-pill { display: inline-flex; align-items: center; margin: 0; color: var(--text); }
+.hint.ok { color: var(--good, inherit); }
+.hint.bad { color: var(--bad); }
 
 /* v0.8: memory clean-up + files */
 .row-actions { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }

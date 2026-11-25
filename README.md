@@ -89,12 +89,38 @@ cd backend && .venv/bin/python -m jarvis.server     # Windows: .venv\Scripts\pyt
 | | Local (offline, default) | Cloud |
 |---|---|---|
 | Speech to text | faster-whisper: tiny / base / **small** (default) / medium / distil-large-v3 / large-v3-turbo, int8 on CPU, CUDA if available | OpenAI Whisper, Groq Whisper, ElevenLabs Scribe |
-| Text to speech | **Piper** (default, en_GB "Alan" — light enough for old laptops), **Kokoro** 82M (more natural, int8 ≈ 90 MB) | ElevenLabs, Fish Audio, OpenAI TTS |
+| Text to speech | **Piper** (default, en_GB "Alan" — light enough for old laptops), **Kokoro** 82M (more natural, int8 ≈ 90 MB), **your own cloned voice** (Fish Speech or XTTS-v2) | ElevenLabs, Fish Audio (incl. cloning), OpenAI TTS, Edge neural Tamil voice |
 
 Low-end PC tips: Whisper `base` or `tiny.en` + Piper. With a GPU, set STT device to `cuda` and use `distil-large-v3`.
 
 Hands-free mode uses an adaptive energy-based voice detector. While a permission prompt is open you can
 answer by voice ("yes" / "no").
+
+### Custom voice (voice cloning)
+
+Give Jarvis any voice. In ⚙ → Voice → **Custom voice**, upload or record 6 to 30 seconds of clean speech
+(and, ideally, type what you said), then choose **Custom voice** as the text-to-speech provider. Engines:
+
+- **Fish Speech** (default, fully local): run Fish Speech / OpenAudio's API server
+  (`python -m tools.api_server --listen 127.0.0.1:8080` from the fish-speech repo). Jarvis sends your sample
+  with every request, so there's nothing to register. A GPU makes it real-time.
+- **XTTS-v2** (local): runs inside Jarvis if the `coqui-tts` package is installed (source installs), otherwise
+  start [xtts-api-server](https://github.com/daswer123/xtts-api-server) on port 8020. Note the XTTS model's
+  non-commercial licence.
+- **Fish Audio** (cloud): no install; uses your Fish Audio API key and the same sample.
+
+If the engine isn't reachable, Jarvis says so once and keeps talking in the fallback voice (Piper by default).
+The sample stays in `~/.jarvis/voice/`.
+
+### Tamil and English
+
+Talk in Tamil, English, or both mixed freely (⚙ → Voice → Language, default "Tamil and English"). Whisper is
+held to Tamil or English, whichever it hears more of, so Tanglish isn't misheard as another language, and
+Jarvis answers in kind: Tamil script for Tamil, Tanglish for Tanglish, a natural Chennai-style mix for a mix,
+English for English (or force English/Tamil). Sentences in Tamil script are spoken by a Tamil voice: Microsoft
+Edge's free neural "Valluvar" or "Pallavi" (online), or your ElevenLabs/OpenAI voice if that's your main voice.
+"சரி" / "வேண்டாம்" answer permission prompts, and "நிறுத்து" or "போதும்" interrupt. For Tamil, Whisper
+**medium** or **large-v3-turbo** hears much better than small.
 
 ### Natural interruptions (barge-in)
 
@@ -139,6 +165,12 @@ After it answers it keeps listening for about 10 seconds, so follow-ups don't ne
 "Hey Jarvis" while it's talking interrupts it. Switch modes in the Voice tile: **Off** (push to talk),
 **Wake word**, or **Always** (always listening). Tune sensitivity in ⚙ → Proactive.
 
+**Or just clap twice**, like in the films. A double clap (two sharp claps 0.1 to 0.8 s apart) wakes Jarvis in
+Wake word and Always modes, and it answers "Yes?" (in Tamil if that's what you last spoke). The detector looks
+for short, broadband impulses after a moment of quiet with nothing sustained around them, so speech, music,
+applause, a third clap, desk thumps and door slams don't count. Turn it off or change the sensitivity in
+⚙ → Proactive → Listening.
+
 ## Proactive
 
 - **Reminders and routines.** "Remind me at 6 to call Mum", "every Monday at 9, clean my Downloads",
@@ -146,6 +178,11 @@ After it answers it keeps listening for about 10 seconds, so follow-ups don't ne
   confirmation rules). Jobs live in `~/.jarvis/schedule.json` and show in the Agenda tile.
 - **Morning and evening briefings.** Turn them on in ⚙ → Proactive: weather (Open-Meteo, no key), your calendar
   and email when an app is connected, today's reminders and what Jarvis remembers.
+- **Ambient mode** (on by default). Jarvis chimes in on its own like a friend in the room: "You've been coding
+  for two hours, fancy a break?", a stretch reminder after long screen time, a welcome back (with what's coming
+  up) after you've been away. It only uses the active window title and keyboard/mouse idle time, stays quiet
+  in meetings, while you're away, while it's busy and during **quiet hours** (23:00 to 07:00 by default), and
+  speaks at most once every 45 minutes. All of it is adjustable in ⚙ → Proactive → Ambient mode.
 - **Screen awareness** (off by default). Every minute or so while idle, Jarvis glances at the active window
   (and a small screenshot if the model can see images) and, only when there's a clear problem like an error
   dialog or a failed build, offers to help. Offers are rate-limited and never repeated. Nothing is stored.
@@ -177,6 +214,18 @@ After it answers it keeps listening for about 10 seconds, so follow-ups don't ne
   an address and token. Add them on your main PC under "Other PCs I control" and ask "on the laptop, open Spotify".
   Each request needs the token; admin commands from other PCs are refused unless you allow them. Use it on your
   home network or a private network like Tailscale, not the open internet.
+
+## Smart home (Home Assistant)
+
+Control lights, AC, TV, fans, plugs, blinds and scenes by voice through [Home Assistant](https://www.home-assistant.io/).
+In Home Assistant, open your profile → Security → **Long-lived access tokens**, create one, then paste it with your
+Home Assistant URL (e.g. `http://homeassistant.local:8123`) into ⚙ → Connections → Smart home and press
+**Test connection**. Then just talk: "bedroom lights to 40 percent, warm", "AC 24 degrees, cool mode",
+"turn off the TV", "TV volume 20", "switch the TV to Netflix", "all lights off", "லைட் ஆஃப் பண்ணு".
+
+Jarvis matches devices by their names and rooms (so it never needs entity ids), knows your device list, and can
+hand any sentence to Home Assistant's own Assist. Unlocking doors, disarming alarms and opening covers (garage)
+always ask first. The token stays in `~/.jarvis/settings.json` and is masked in the app.
 
 ## Your phone (Android companion)
 
