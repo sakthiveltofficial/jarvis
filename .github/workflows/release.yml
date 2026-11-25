@@ -53,6 +53,8 @@ jobs:
           Invoke-RestMethod http://127.0.0.1:8799/api/skills | ConvertTo-Json -Depth 4
           Invoke-RestMethod http://127.0.0.1:8799/api/mcp | ConvertTo-Json -Depth 4
           Invoke-RestMethod http://127.0.0.1:8799/api/phones | ConvertTo-Json -Depth 4
+          Invoke-RestMethod http://127.0.0.1:8799/api/memory/consolidation | ConvertTo-Json -Depth 4
+          Invoke-RestMethod http://127.0.0.1:8799/api/files | ConvertTo-Json -Depth 4
           Stop-Process -Id $p.Id -Force
           if (-not $ok) { Get-Content "$env:RUNNER_TEMP\backend.log","$env:RUNNER_TEMP\backend.err"; throw "frozen backend did not start" }
 

@@ -4,6 +4,7 @@
   const TYPE_COLORS = {
     Person: "#ffffff", Organization: "#ffe08a", Place: "#c8f0a8", Project: "#d6f34a", Preference: "#ffc2a6",
     Event: "#fff0b8", Task: "#ffb38a", Device: "#d4e2f2", Skill: "#bff0e2", Concept: "#ece7f5", Thing: "#e9e4dc",
+    Document: "#b9d8ff",
   };
   const colorOf = (t) => TYPE_COLORS[t] || TYPE_COLORS.Thing;
 
