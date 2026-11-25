@@ -93,6 +93,12 @@ def _extras(ex: dict, user: str) -> str:
                    "calendar, notes, code hosting, music and so on before falling back to the browser.")
     if ex.get("pcs"):
         out.append(f"\nOther computers you can control with `remote_pc`:\n{ex['pcs']}")
+    if ex.get("phones"):
+        out.append(f"\n{user}'s phones (use the `phone` tool; they're Android phones running the Jarvis app):\n{ex['phones']}\n"
+                   "To work an app on the phone: open_app, then read the numbered screen list and tap/type by index. "
+                   "Each action returns the updated screen; check it before the next step. Prefer the direct actions "
+                   "(sms, call, notifications, files, contacts) over tapping through apps when they fit. If something "
+                   "isn't allowed on the phone, tell them which switch to turn on in the app's Phone tab.")
     if ex.get("background"):
         out.append(f"\nBackground tasks running now:\n{ex['background']}")
     if ex.get("plan"):

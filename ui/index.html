@@ -322,6 +322,25 @@
       <label>Servers (JSON) <textarea id="mcp-json" rows="9" spellcheck="false"></textarea></label>
       <small class="hint" id="mcp-json-err"></small>
 
+      <h3>My phone</h3>
+      <p class="hint">Install <a href="https://github.com/sakthiveltofficial/jarvis-mobile/releases" target="_blank" rel="noopener">Jarvis for Android</a> on your phone, then pair it here. You can talk to me from the phone, and I can use the phone for you: read the screen and tap, messages, calls, notifications and files. Same Wi-Fi or Tailscale; the link is end-to-end encrypted.</p>
+      <label class="check"><input type="checkbox" id="phones-on" /> Let my phone connect to this PC</label>
+      <div class="row3">
+        <label>Port <input id="phones-port" type="number" min="1024" max="65535" /></label>
+        <label>Extra addresses <input id="phones-hosts" placeholder="e.g. my-pc.tailnet.ts.net" /></label>
+      </div>
+      <div id="phone-rows" class="mlist"></div>
+      <div class="row-btns"><button class="pill primary" id="phone-pair" type="button">Pair a phone</button></div>
+      <div id="phone-qr" class="phone-qr hidden">
+        <div class="qr-box" id="phone-qr-img"></div>
+        <div class="qr-side">
+          <b>Scan with the Jarvis app</b>
+          <p class="hint">Open Jarvis on your phone and point it at this code. It works once and expires in <span id="phone-qr-time">10:00</span>.</p>
+          <p class="hint" id="phone-qr-addr"></p>
+          <div class="row-btns"><button class="pill" id="phone-qr-copy" type="button">Copy link</button><button class="pill" id="phone-qr-close" type="button">Done</button></div>
+        </div>
+      </div>
+
       <h3>This PC</h3>
       <label class="check"><input type="checkbox" id="node-on" /> Let my other PCs control this one</label>
       <div class="row3">

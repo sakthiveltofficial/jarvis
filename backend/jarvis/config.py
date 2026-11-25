@@ -110,6 +110,10 @@ DEFAULTS = {
         "enabled": False, "port": 8766, "token": "", "name": "", "allow_elevated": False,
     },
     "nodes": [],                       # other PCs this one controls: [{name, url, token}]
+    "phones": {                        # Android phones running the Jarvis app (see phones.py)
+        "enabled": False, "port": 8767, "name": "", "extra_hosts": [],
+        "devices": [],                 # [{id, name, model, android, key, paired_at, last_seen}] (key = secret)
+    },
 }
 
 SECRET_KEYS = ("env", "headers")       # dict fields inside mcp servers whose values are masked
@@ -202,4 +206,6 @@ def public(settings: dict) -> dict:
                 srv[k] = {kk: _mask(vv) for kk, vv in srv[k].items()}
     for n in s.get("nodes") or []:
         n["token"] = _mask(n.get("token", ""))
+    ph = s.get("phones") or {}
+    ph["devices"] = [{k: v for k, v in d.items() if k != "key"} for d in ph.get("devices") or []]
     return s

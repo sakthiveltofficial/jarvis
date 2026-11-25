@@ -58,6 +58,8 @@ function onEvent(ev) {
     case "memory_search": onMemorySearch(ev); break;
     case "memory_saving": $("graph-query").textContent = "saving what I learned…"; break;
     case "memory_update": onMemoryUpdate(ev); break;
+    case "phones": if (!$("tab-connections").classList.contains("hidden")) loadPhones(); break;
+    case "phone_paired": clearInterval(qrTimer); $("phone-qr").classList.add("hidden"); loadPhones(); break;
     case "confirm_done": if ($("confirm-box").dataset.id === ev.id) $("confirm-box").classList.add("hidden"); break;
   }
 }
@@ -475,6 +477,8 @@ async function openSettings() {
   }
   $("aw-on").checked = !!aw.enabled; $("aw-int").value = aw.interval_s ?? 60; $("aw-cool").value = aw.cooldown_min ?? 10; $("aw-model").value = aw.model || "";
   $("mcp-json").value = JSON.stringify((s.mcp && s.mcp.servers) || [], null, 2);
+  const ph = s.phones || {};
+  $("phones-on").checked = !!ph.enabled; $("phones-port").value = ph.port || 8767; $("phones-hosts").value = (ph.extra_hosts || []).join(", ");
   $("node-on").checked = !!nd.enabled; $("node-name").value = nd.name || ""; $("node-port").value = nd.port || 8766; $("node-elev").checked = !!nd.allow_elevated;
   pcs = (s.nodes || []).map((x) => ({ ...x })); renderPcs();
   renderSchedules();
@@ -521,6 +525,8 @@ function collect() {
     },
     awareness: { enabled: $("aw-on").checked, interval_s: Number($("aw-int").value || 60), cooldown_min: Number($("aw-cool").value || 10), model: $("aw-model").value.trim() },
     mcp: { servers: parseMcp() },
+    phones: { enabled: $("phones-on").checked, port: Number($("phones-port").value || 8767),
+      extra_hosts: $("phones-hosts").value.split(",").map((x) => x.trim()).filter(Boolean) },
     node: { enabled: $("node-on").checked, name: $("node-name").value.trim(), port: Number($("node-port").value || 8766), allow_elevated: $("node-elev").checked },
     nodes: pcs.filter((p) => p.name && p.url),
   };
@@ -555,7 +561,51 @@ function parseMcp(quiet) {
     return quiet ? null : (settings?.mcp?.servers || []);
   }
 }
+// ------------------------------------------------------------------ phones
+const PHONE_CAPS = { accessibility: "screen", notifications: "notifications", sms: "SMS", calls: "calls", contacts: "contacts", files: "files", location: "location", shizuku: "power mode" };
+async function loadPhones() {
+  try {
+    const r = await (await fetch(API + "/api/phones")).json();
+    const rows = r.devices.map((d) => {
+      const row = el("div", "mrow");
+      const n = el("span", "name");
+      const caps = Object.entries(PHONE_CAPS).filter(([k]) => d.caps && d.caps[k]).map(([, v]) => v);
+      n.append(el("b", "", d.name), el("span", "desc", `${d.model || "Android"}${d.online ? ` · ${d.host}` : d.last_seen ? ` · last seen ${when(new Date(d.last_seen * 1000).toISOString())}` : ""}${caps.length ? ` · can use: ${caps.join(", ")}` : ""}`));
+      const st = el("span", "state " + (d.online ? "ready" : "error"), d.online ? "online" : "offline");
+      const x = el("button", "pill", "Remove");
+      x.onclick = async () => { if (!confirm(`Remove ${d.name}? It will need to pair again.`)) return; await fetch(API + "/api/phones/" + encodeURIComponent(d.id), { method: "DELETE" }); loadPhones(); };
+      row.append(n, st, x);
+      return row;
+    });
+    $("phone-rows").replaceChildren(...(rows.length ? rows : [el("div", "ag-empty hint", r.enabled ? "No phone paired yet." : "Phone link is off. Pair a phone to turn it on.")]));
+  } catch (_) {}
+}
+let qrTimer = null;
+$("phone-pair").onclick = async () => {
+  $("phone-pair").disabled = true;
+  try {
+    const r = await (await fetch(API + "/api/phones/pair", { method: "POST" })).json();
+    $("phones-on").checked = true;
+    $("phone-qr-img").innerHTML = r.svg || "";
+    if (!r.svg) $("phone-qr-img").textContent = "QR unavailable: use Copy link and paste it in the app.";
+    $("phone-qr-addr").textContent = `Addresses: ${r.addresses.map((a) => `${a}:${r.port}`).join(", ") || "none found"}`;
+    $("phone-qr-copy").onclick = () => navigator.clipboard.writeText(r.uri).then(() => ($("phone-qr-copy").textContent = "Copied"));
+    $("phone-qr").classList.remove("hidden");
+    let left = r.expires_in;
+    clearInterval(qrTimer);
+    qrTimer = setInterval(() => {
+      left -= 1;
+      $("phone-qr-time").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+      if (left <= 0) { clearInterval(qrTimer); $("phone-qr").classList.add("hidden"); }
+    }, 1000);
+  } finally {
+    $("phone-pair").disabled = false;
+  }
+};
+$("phone-qr-close").onclick = () => { clearInterval(qrTimer); $("phone-qr").classList.add("hidden"); loadPhones(); };
+
 async function loadConnections() {
+  loadPhones();
   try {
     const m = await (await fetch(API + "/api/mcp")).json();
     $("mcp-status").replaceChildren(...m.servers.map((s) => {

@@ -34,6 +34,11 @@ session: Session | None = None
 
 
 async def broadcast(ev: dict):
+    if session is not None and getattr(session, "phones", None) is not None:
+        try:
+            session.phones.forward(ev)
+        except Exception:  # noqa: BLE001
+            pass
     dead = []
     for ws in list(clients):
         try:
@@ -221,6 +226,29 @@ def node_info():
 @app.get("/api/nodes/status")
 async def nodes_status():
     return {"pcs": await asyncio.gather(*[asyncio.to_thread(nodes.ping, p) for p in session.settings.get("nodes") or []])}
+
+
+# --------------------------------------------------------------------------- phones
+@app.get("/api/phones")
+def phones_status():
+    cfg = session.settings.get("phones") or {}
+    return {"enabled": bool(cfg.get("enabled")), "running": session.phones.running(),
+            "port": int(cfg.get("port") or 8767), "addresses": session.phones.addresses(),
+            "name": session.phones.pc_name(), "devices": session.phones.status()}
+
+
+@app.post("/api/phones/pair")
+def phones_pair():
+    if not (session.settings.get("phones") or {}).get("enabled"):
+        session.apply_settings({"phones": {"enabled": True}})
+    return session.phones.new_pairing()
+
+
+@app.delete("/api/phones/{device_id}")
+def phones_remove(device_id: str):
+    ok = session.phones.remove(device_id)
+    session.emit({"type": "phones"})
+    return {"ok": ok}
 
 
 # --------------------------------------------------------------------------- WebSocket

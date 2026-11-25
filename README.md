@@ -32,6 +32,8 @@ files, mouse and keyboard, apps, and a real web browser.
 │ emotion.py    tone from your voice -> how Jarvis speaks  │
 │ awareness.py  screen glances -> proactive offers         │
 │ nodes.py      control your other PCs                     │
+│ phones.py     your Android phone: pairing, encrypted     │
+│               link, the `phone` tool                     │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -155,6 +157,26 @@ After it answers it keeps listening for about 10 seconds, so follow-ups don't ne
   Each request needs the token; admin commands from other PCs are refused unless you allow them. Use it on your
   home network or a private network like Tailscale, not the open internet.
 
+## Your phone (Android companion)
+
+[Jarvis for Android](https://github.com/sakthiveltofficial/jarvis-mobile) pairs with this PC by QR code. Download the
+APK from its Releases, then on the PC open ⚙ → Connections → **My phone** → **Pair a phone** and scan the code.
+
+- **Talk or chat from the phone.** Hold the mic to talk; this PC transcribes it and can speak the reply through the
+  phone. Confirmations ("Shall I go ahead?") can be answered on either device.
+- **Jarvis uses the phone** through a `phone` tool: read the screen as a numbered list of elements and tap, swipe,
+  scroll and type; open apps and links; read, open, reply to and dismiss notifications; read and send SMS; call,
+  answer, hang up and read the call log; search contacts; browse files and copy them between phone and PC; location,
+  ring (find my phone), torch, volume and media keys; and shell commands in the optional Shizuku "power mode".
+  You choose what's allowed in the app's Phone tab. Sending messages, calling, deleting or writing files and shell
+  commands follow your "Ask before acting" setting.
+- **Private.** The phone connects straight to this PC on port 8767 over your Wi-Fi or Tailscale; there's no cloud
+  relay. Pairing uses a one-time secret in the QR code (10 minutes, single use) to hand the phone its own device key;
+  every message after that is AES-256-GCM encrypted and bound to the connection. Remove a phone in Connections at any
+  time. The phone link only listens while "Let my phone connect" is on (pairing turns it on).
+- Prefer not to install an app? [mobile-mcp](https://github.com/mobile-next/mobile-mcp) works as an MCP server under
+  Connections → Apps while the phone is connected over (wireless) ADB.
+
 ## Long-term memory (knowledge graph)
 
 Jarvis builds a personal knowledge graph in an embedded graph database
@@ -187,7 +209,7 @@ Jarvis has the same power over your machine as your user account, and more when 
 
 ## Data
 
-Everything lives in `~/.jarvis/`: `settings.json` (including API keys and app tokens, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech and wake word models), `skills/`, `schedule.json`, `plans.json`, `voice_profile.json` (your voice baseline for tone detection), `logs/` (MCP server output) and `browser-profile/` (the automation browser's logins).
+Everything lives in `~/.jarvis/`: `settings.json` (including API keys, app tokens and paired phones' device keys, stored in plain text with user-only permissions), `graph.db` (the knowledge graph), `models/` (downloaded speech and wake word models), `skills/`, `schedule.json`, `plans.json`, `voice_profile.json` (your voice baseline for tone detection), `logs/` (MCP server output) and `browser-profile/` (the automation browser's logins).
 Environment variables like `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ELEVENLABS_API_KEY` and `FISH_AUDIO_API_KEY` also work.
 
 ## Download (Windows)

@@ -163,6 +163,42 @@ SPECS = [
              "read_file, write_file, list_dir, clipboard, system_info, and `args` its arguments.",
              {"pc": {"type": "string"}, "tool": {"type": "string"}, "args": {"type": "object"}},
              ["pc", "tool"], group="nodes"),
+    ToolSpec("phone",
+             "Use the user's Android phone (through the Jarvis phone app). `device` picks a phone by name when there "
+             "are several. Actions:\n"
+             "- screen(query?): numbered list of what's on screen ([N] class \"text\" #id (x,y) flags). Read it before "
+             "acting; every tap/type/swipe/scroll/key/open_app returns the new screen, so you rarely need to call it twice.\n"
+             "- tap(index | x,y), long_press(index | x,y), type(text, index?, clear=true, submit?), "
+             "swipe(direction up|down|left|right | x,y,to_x,to_y), scroll(direction, index?), "
+             "key(key: back|home|recents|notifications|quick_settings|lock|enter|delete|volume_up|volume_down|power).\n"
+             "- screenshot(): image of the screen (same coordinate space as screen).\n"
+             "- open_app(app: name or package), list_apps(query?), open_url(url).\n"
+             "- notifications(op: list|open|reply|dismiss, key, text, app, limit).\n"
+             "- sms(op: list|send, to: name or number, text, query, limit); call(op: dial|answer|end|log, number); "
+             "contacts(query).\n"
+             "- files(op: list|info|read|write|mkdir|delete|move|pull|push, path, content, append, to); pull copies a phone "
+             "file to this PC (save_to, default ~/Downloads); push sends a PC file (from_path) to the phone (path).\n"
+             "- device_info, location, ring(on) to find the phone, torch(on), volume(stream, level 0-100, ringer), "
+             "media(command: play|pause|toggle|next|previous), clipboard(op get|set, text), "
+             "shell(command) with power mode, status (what the phone allows).\n"
+             "Paths are relative to the phone's shared storage (e.g. Download/report.pdf, DCIM/Camera).",
+             {"action": {"type": "string", "enum": [
+                 "screen", "screenshot", "tap", "long_press", "type", "swipe", "scroll", "key", "open_app", "list_apps",
+                 "open_url", "notifications", "sms", "call", "contacts", "files", "device_info", "location", "ring",
+                 "torch", "volume", "media", "clipboard", "shell", "status"]},
+              "device": {"type": "string"}, "index": {"type": "integer"},
+              "x": {"type": "number"}, "y": {"type": "number"}, "to_x": {"type": "number"}, "to_y": {"type": "number"},
+              "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+              "text": {"type": "string"}, "query": {"type": "string"}, "clear": {"type": "boolean"},
+              "submit": {"type": "boolean"}, "key": {"type": "string"}, "app": {"type": "string"},
+              "url": {"type": "string"}, "op": {"type": "string"}, "to": {"type": "string"},
+              "number": {"type": "string"}, "path": {"type": "string"}, "content": {"type": "string"},
+              "append": {"type": "boolean"}, "save_to": {"type": "string"}, "from_path": {"type": "string"},
+              "command": {"type": "string"}, "on": {"type": "boolean"}, "level": {"type": "integer"},
+              "stream": {"type": "string", "enum": ["media", "ring", "alarm", "notification", "call"]},
+              "ringer": {"type": "string", "enum": ["normal", "vibrate", "silent"]},
+              "limit": {"type": "integer"}, "timeout": {"type": "integer"}},
+             ["action"], group="phones"),
 ]
 
 NODE_TOOLS = {"run_shell", "screenshot", "mouse", "keyboard", "open", "list_windows", "read_file", "write_file",
@@ -170,12 +206,13 @@ NODE_TOOLS = {"run_shell", "screenshot", "mouse", "keyboard", "open", "list_wind
 GUI_TOOLS = {"mouse", "keyboard", "screenshot", "teach"}
 
 
-def specs_for(vision: bool, main: bool = True, nodes: bool = False, exclude: set | None = None) -> list[ToolSpec]:
+def specs_for(vision: bool, main: bool = True, nodes: bool = False, exclude: set | None = None,
+              phones: bool = False) -> list[ToolSpec]:
     out = []
     for s in SPECS:
         if s.vision_only and not vision:
             continue
-        if (s.group == "main" and not main) or (s.group == "nodes" and not nodes):
+        if (s.group == "main" and not main) or (s.group == "nodes" and not nodes) or (s.group == "phones" and not phones):
             continue
         if exclude and s.name in exclude:
             continue
@@ -223,10 +260,37 @@ def needs_confirmation(name: str, args: dict, mode: str) -> str | None:
         if inner:
             return f"On {args.get('pc')}: {inner[0].lower()}{inner[1:]}"
         return f"Controls {args.get('pc')}" if mode == "always" else None
+    if name == "phone":
+        return _phone_risk(args, mode)
     if name == "schedule" and args.get("kind") == "task":
         return "Schedules a task I'll carry out automatically" if mode == "always" else None
     if mode == "always" and name in ("mouse", "keyboard", "open", "clipboard"):
         return "Controls your mouse/keyboard/apps"
+    return None
+
+
+_PHONE_READ_ONLY = {"screen", "screenshot", "list_apps", "contacts", "device_info", "location", "status"}
+
+
+def _phone_risk(a: dict, mode: str) -> str | None:
+    act, op = a.get("action", ""), a.get("op", "")
+    if act == "sms" and op == "send":
+        return "Sends a text message from your phone"
+    if act == "call" and op in ("dial", "", None):
+        return "Makes a phone call"
+    if act == "call" and op in ("answer", "end"):
+        return "Answers or ends a phone call"
+    if act == "notifications" and op == "reply":
+        return "Replies to a message from your phone"
+    if act == "files" and op in ("delete", "move"):
+        return "Deletes or moves files on your phone"
+    if act == "files" and op in ("write", "push"):
+        return "Writes a file on your phone"
+    if act == "shell":
+        return "Runs a shell command on your phone"
+    if mode == "always" and act not in _PHONE_READ_ONLY and not (act in ("sms", "call", "files", "notifications")
+                                                                  and op in ("list", "log", "read", "info", "pull")):
+        return "Controls your phone"
     return None
 
 
@@ -247,6 +311,17 @@ def describe(name: str, args: dict) -> str:
         return args.get("target", "")
     if name == "remote_pc":
         return f"{args.get('pc')}: {args.get('tool')} " + describe(args.get("tool", ""), args.get("args") or {})
+    if name == "phone":
+        a = args
+        bits = [a.get("device") or "", a.get("action", ""), a.get("op") or ""]
+        detail = (a.get("to") or a.get("number") or a.get("app") or a.get("url") or a.get("path") or a.get("command")
+                  or a.get("key") or a.get("direction") or "")
+        if a.get("index") is not None:
+            detail = f"#{a['index']}"
+        elif a.get("x") is not None:
+            detail = f"({a.get('x')}, {a.get('y')})"
+        text = f" \"{a['text'][:80]}\"" if a.get("text") else ""
+        return " ".join(b for b in bits + [str(detail)] if b).strip() + text
     if name == "plan":
         return args.get("title") or f"step {args.get('step')} {args.get('status', '')}".strip()
     if name in ("schedule", "background_task"):
