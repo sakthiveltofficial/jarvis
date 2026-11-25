@@ -127,8 +127,13 @@ def _mem():
 
 
 @app.get("/api/graph")
-def graph(include_invalid: bool = False):
-    return _mem().graph(include_invalid)
+def graph(include_invalid: bool = False, files: bool = True):
+    g = _mem().graph(include_invalid)
+    if files and session.files is not None:
+        part = session.files.graph_part()
+        g["nodes"] = g["nodes"] + part["nodes"]
+        g["edges"] = g["edges"] + part["edges"]
+    return g
 
 
 @app.get("/api/graph/search")
@@ -140,6 +145,12 @@ def graph_search(q: str):
 def graph_node(node_id: str):
     m = _mem()
     ent = next((e for e in m.entities() if e["id"] == node_id), None)
+    if not ent and node_id.startswith("doc-") and session.files is not None:
+        doc = session.files.document(node_id)
+        if doc:
+            return {"entity": {"id": node_id, "name": doc["name"], "type": "Document", "summary": doc["summary"] or "",
+                               "updated": doc["indexed"] or "", "mentions": len(doc["entities"]), "path": doc["path"],
+                               "chunks": doc["chunks"]}, "facts": []}
     if not ent:
         raise HTTPException(404, "not found")
     return {"entity": ent, "facts": m.facts(valid_only=False, around=[node_id])}
@@ -155,6 +166,89 @@ def graph_forget(node_id: str):
 def graph_clear():
     _mem().clear()
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- v0.8: memory clean-up
+@app.get("/api/memory/consolidation")
+def consolidation_status(days: int = 14):
+    if session.consolidator is None:
+        raise HTTPException(503, "graph memory unavailable")
+    return {**session.consolidator.status(), "digests": _mem().digests(limit=days)}
+
+
+@app.post("/api/memory/consolidate")
+def consolidate_now():
+    if session.consolidator is None:
+        raise HTTPException(503, "graph memory unavailable")
+    return {"started": session.consolidator.run_async(), **session.consolidator.status()}
+
+
+# --------------------------------------------------------------------------- v0.8: your files
+def _files():
+    if session.files is None:
+        raise HTTPException(503, "file index unavailable")
+    return session.files
+
+
+@app.get("/api/files")
+def files_status():
+    return _files().status()
+
+
+def _set_folders(folders: list[str]):
+    session.apply_settings({"files": {"folders": folders}})
+
+
+@app.post("/api/files/folders")
+def files_add(body: dict):
+    from .files import norm
+    path = norm(str(body.get("path") or "").strip().strip('"'))
+    if not os.path.isdir(path):
+        raise HTTPException(400, f"not a folder: {path}")
+    current = _files().folders()
+    if any(path == f or path.startswith(f.rstrip("\\/") + os.sep) for f in current):
+        raise HTTPException(400, "that folder is already indexed")
+    # adding a parent replaces the subfolders it contains
+    _set_folders([f for f in current if not f.startswith(path.rstrip("\\/") + os.sep)] + [path])
+    return _files().status()
+
+
+@app.delete("/api/files/folders")
+def files_remove(path: str):
+    from .files import norm
+    _set_folders([f for f in _files().folders() if f != norm(path)])
+    return _files().status()
+
+
+@app.post("/api/files/reindex")
+def files_reindex(body: dict | None = None):
+    _files().reindex((body or {}).get("path") or None)
+    return _files().status()
+
+
+@app.get("/api/files/search")
+def files_search(q: str, limit: int = 8):
+    fi = _files()
+    return {"query": q, "hits": [fi.public_hit(h) | {"score": h["score"]} for h in fi.search(q, limit=limit)]}
+
+
+@app.post("/api/files/open")
+def files_open(body: dict):
+    from .files import open_path
+    path = str(body.get("path") or "")
+    if not _files().is_indexed(path):      # only files Jarvis indexed, never arbitrary paths
+        raise HTTPException(404, "not an indexed file")
+    open_path(path)
+    return {"ok": True}
+
+
+@app.post("/api/files/pick")
+async def files_pick():
+    from .files import pick_folder
+    try:
+        return {"path": await asyncio.to_thread(pick_folder)}
+    except Exception as e:  # noqa: BLE001
+        return {"path": "", "error": str(e)}
 
 
 # --------------------------------------------------------------------------- v0.4: agenda, skills, apps, PCs

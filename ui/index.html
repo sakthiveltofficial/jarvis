@@ -130,6 +130,7 @@
       <button data-tab="models">Local models</button>
       <button data-tab="behaviour">Behaviour</button>
       <button data-tab="memory">Memory</button>
+      <button data-tab="files">Files</button>
       <button data-tab="proactive">Proactive</button>
       <button data-tab="skills">Skills</button>
       <button data-tab="connections">Connections</button>
@@ -261,6 +262,19 @@
       <p class="hint">I keep a knowledge graph of what matters to you: people, projects, preferences, plans and how they change over time. It's stored only on this computer (~/.jarvis/graph.db). Open the <b>Memory graph</b> view to explore it; click a node to see or forget it.</p>
       <p id="mem-stats" class="hint"></p>
       <label class="check"><input type="checkbox" id="mem-auto" /> Automatically save what I learn after every conversation turn</label>
+      <h3>Nightly clean-up</h3>
+      <p class="hint">Once a night I write a short diary of the day, merge duplicate people and facts, and let facts nobody has used in a long time fade into history, so memory stays sharp over the years. Names, family, birthdays, home and work never fade. If the PC is off at that time, I catch up when it's next on.</p>
+      <div class="row3">
+        <label class="check"><input type="checkbox" id="mem-cons" /> Clean up every night</label>
+        <label>at <input id="mem-cons-time" type="time" /></label>
+        <label>Unused facts fade after about (days) <input id="mem-half" type="number" min="0" max="3650" title="Half-life: an unused fact's strength halves this often. 0 = never fade." /></label>
+      </div>
+      <div class="row2">
+        <label>Keep outdated facts as history for (days, 0 = forever) <input id="mem-keep" type="number" min="0" max="36500" /></label>
+        <label>Model for clean-up and reading files <input id="mem-model" placeholder="same as Brain" /></label>
+      </div>
+      <div class="row-actions"><button class="pill" id="mem-cons-run" type="button">Clean up now</button> <span id="mem-cons-status" class="hint"></span></div>
+      <div id="mem-digests" class="mlist"></div>
       <h3>Interruptions</h3>
       <label class="check"><input type="checkbox" id="barge-on" /> Let me interrupt Jarvis by talking (hands-free mode)</label>
       <div class="row2">
@@ -271,6 +285,24 @@
       </div>
       <h3>Danger zone</h3>
       <button class="pill danger" id="mem-clear" type="button">Forget everything</button>
+    </div>
+
+    <div class="tab hidden" id="tab-files">
+      <p class="hint">Point me at folders and I'll read the notes, PDFs, Word and PowerPoint files and code inside, link them to the people and projects I know, and keep them up to date as they change. Then just ask: “what did that contract say about payment?” I'll tell you which file and page the answer came from. Everything stays on this computer (~/.jarvis).</p>
+      <div class="row-actions">
+        <input id="files-path" placeholder="C:\Users\you\Documents\Notes" style="flex:1" />
+        <button class="pill" id="files-browse" type="button">Browse…</button>
+        <button class="pill" id="files-add" type="button">Add folder</button>
+      </div>
+      <p id="files-err" class="hint err"></p>
+      <div id="files-list" class="mlist"></div>
+      <p id="files-now" class="hint"></p>
+      <label class="check"><input type="checkbox" id="files-recall" /> Bring up matching passages from my files automatically when I ask something</label>
+      <label class="check"><input type="checkbox" id="files-entities" /> Link documents to people, companies and projects (one quick model call per document; code is skipped)</label>
+      <label>Skip files bigger than (MB) <input id="files-max" type="number" min="1" max="500" style="max-width:120px" /></label>
+      <h3>Try it</h3>
+      <div class="row-actions"><input id="files-q" placeholder="Search your files…" style="flex:1" /></div>
+      <div id="files-hits" class="mlist"></div>
     </div>
 
     <div class="tab hidden" id="tab-proactive">

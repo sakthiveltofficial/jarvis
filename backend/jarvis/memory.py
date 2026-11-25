@@ -8,9 +8,13 @@ Model
   (:Entity)-[:Fact {id, relation, fact, created, valid, invalidated}]->(:Entity)
   (:Episode {id, text, created})-[:Mentions]->(:Entity)
 
+  (:Digest {id, date, text, created})-[:Covers]->(:Entity)      one summary per day (consolidation.py)
+
 Facts are never deleted when something changes: the old fact is marked valid=false with an
-`invalidated` timestamp and the new fact is added, so the graph keeps a timeline that works
-over months and years.
+`invalidated` timestamp (and a `reason`: updated | merged | faded) and the new fact is added, so the
+graph keeps a timeline that works over months and years. Each fact also counts how often it was
+recalled or re-stated (`uses`, `reinforced`), which the nightly consolidation uses to let unused
+facts fade out. Indexed files add (:Document) and (:Chunk) nodes (see files.py).
 """
 from __future__ import annotations
 
@@ -67,6 +71,7 @@ class GraphMemory:
         self.db = gdb.Database(str(path))
         self.conn = gdb.Connection(self.db)
         self._entities_cache = None
+        self.on_merge = None   # callback(keep_id, other_id) so linked indexes (files) can follow a merge
         self._schema()
 
     # ------------------------------------------------------------------ low level
@@ -85,6 +90,13 @@ class GraphMemory:
         self.q("CREATE REL TABLE IF NOT EXISTS Fact(FROM Entity TO Entity, id STRING, relation STRING, fact STRING, "
                "created STRING, valid BOOLEAN, invalidated STRING)")
         self.q("CREATE REL TABLE IF NOT EXISTS Mentions(FROM Episode TO Entity)")
+        self.q("CREATE NODE TABLE IF NOT EXISTS Digest(id STRING, date STRING, text STRING, created STRING, "
+               "PRIMARY KEY(id))")
+        self.q("CREATE REL TABLE IF NOT EXISTS Covers(FROM Digest TO Entity)")
+        # v0.8 columns (older databases get them added with defaults)
+        self.q("ALTER TABLE Fact ADD IF NOT EXISTS uses INT64 DEFAULT 0")
+        self.q("ALTER TABLE Fact ADD IF NOT EXISTS reinforced STRING DEFAULT ''")
+        self.q("ALTER TABLE Fact ADD IF NOT EXISTS reason STRING DEFAULT ''")
 
     def ensure_user(self, name: str):
         name = name or "User"
@@ -111,7 +123,8 @@ class GraphMemory:
         # skip exact duplicates that are still valid
         dup = self.q("MATCH (a:Entity {id:$a})-[f:Fact]->(b:Entity {id:$b}) WHERE f.valid AND f.relation=$r "
                      "AND lower(f.fact)=lower($fact) RETURN f.id", {"a": sid, "b": did, "r": rel, "fact": fact})
-        if dup:
+        if dup:   # said again: that makes it stronger
+            self.reinforce([d[0] for d in dup])
             return None
         fid = uuid.uuid4().hex[:10]
         self.q("MATCH (a:Entity {id:$a}), (b:Entity {id:$b}) CREATE (a)-[:Fact {id:$id, relation:$r, fact:$f, "
@@ -119,10 +132,57 @@ class GraphMemory:
                {"a": sid, "b": did, "id": fid, "r": rel, "f": fact, "t": now()})
         return fid
 
-    def invalidate(self, fact_id: str) -> bool:
-        rows = self.q("MATCH ()-[f:Fact {id:$id}]->() WHERE f.valid SET f.valid=false, f.invalidated=$t RETURN f.id",
-                      {"id": fact_id, "t": now()})
+    def invalidate(self, fact_id: str, reason: str = "updated") -> bool:
+        rows = self.q("MATCH ()-[f:Fact {id:$id}]->() WHERE f.valid SET f.valid=false, f.invalidated=$t, "
+                      "f.reason=$r RETURN f.id", {"id": fact_id, "t": now(), "r": reason})
         return bool(rows)
+
+    def reinforce(self, fact_ids: list[str], by: int = 1):
+        """A fact was recalled or said again: reset its fade clock."""
+        if fact_ids:
+            self.q("MATCH ()-[f:Fact]->() WHERE f.id IN $ids SET f.uses=coalesce(f.uses, 0)+$n, f.reinforced=$t",
+                   {"ids": list(fact_ids), "n": by, "t": now()})
+
+    def set_fact_text(self, fact_id: str, text: str):
+        self.q("MATCH ()-[f:Fact {id:$id}]->() SET f.fact=$x", {"id": fact_id, "x": text})
+
+    def delete_facts(self, fact_ids: list[str]):
+        if fact_ids:
+            self.q("MATCH ()-[f:Fact]->() WHERE f.id IN $ids DELETE f", {"ids": list(fact_ids)})
+
+    def merge_entities(self, keep: str, other: str) -> int:
+        """Fold `other` into `keep`: its facts, episode links and mentions move over, then it is removed.
+        Returns how many facts moved, or -1 when nothing was merged."""
+        if keep == other or other == USER_ID:
+            return -1
+        ents = {e["id"]: e for e in self.entities()}
+        if keep not in ents or other not in ents:
+            return -1
+        moved = 0
+        for f in self.facts(valid_only=False, around=[other]):
+            src = keep if f["source"] == other else f["source"]
+            dst = keep if f["target"] == other else f["target"]
+            if src == dst:     # a fact linking the two duplicates to each other says nothing new
+                continue
+            self.q("MATCH (a:Entity {id:$a}), (b:Entity {id:$b}) CREATE (a)-[:Fact {id:$id, relation:$r, fact:$f, "
+                   "created:$c, valid:$v, invalidated:$i, uses:$u, reinforced:$rf, reason:$rs}]->(b)",
+                   {"a": src, "b": dst, "id": f["id"] + "m", "r": f["relation"], "f": f["fact"], "c": f["created"],
+                    "v": f["valid"], "i": f["invalidated"] or "", "u": f["uses"], "rf": f["reinforced"],
+                    "rs": f["reason"]})
+            moved += 1
+        self.q("MATCH (p:Episode)-[:Mentions]->(o:Entity {id:$o}), (k:Entity {id:$k}) "
+               "WHERE NOT EXISTS { MATCH (p)-[:Mentions]->(k) } CREATE (p)-[:Mentions]->(k)", {"o": other, "k": keep})
+        self.q("MATCH (d:Digest)-[:Covers]->(o:Entity {id:$o}), (k:Entity {id:$k}) "
+               "WHERE NOT EXISTS { MATCH (d)-[:Covers]->(k) } CREATE (d)-[:Covers]->(k)", {"o": other, "k": keep})
+        if self.on_merge:
+            self.on_merge(keep, other)
+        o, k = ents[other], ents[keep]
+        summ = k["summary"] or o["summary"]
+        self.q("MATCH (k:Entity {id:$k}) SET k.mentions=k.mentions+$m, k.summary=$s, k.updated=$t",
+               {"k": keep, "m": int(o["mentions"] or 0), "s": summ, "t": now()})
+        self.q("MATCH (e:Entity {id:$id}) DETACH DELETE e", {"id": other})
+        self._entities_cache = None
+        return moved
 
     def add_episode(self, text: str, entity_ids: list[str]) -> str:
         eid = uuid.uuid4().hex[:10]
@@ -157,6 +217,7 @@ class GraphMemory:
 
     def clear(self):
         self.q("MATCH (e:Episode) DETACH DELETE e")
+        self.q("MATCH (d:Digest) DETACH DELETE d")
         self.q("MATCH (e:Entity) WHERE e.id <> $u DETACH DELETE e", {"u": USER_ID})
         self._entities_cache = None
 
@@ -177,9 +238,33 @@ class GraphMemory:
         cy = "MATCH (a:Entity)-[f:Fact]->(b:Entity)"
         if where:
             cy += " WHERE " + " AND ".join(where)
-        cy += " RETURN f.id, a.id, f.relation, b.id, f.fact, f.created, f.valid, f.invalidated"
+        cy += (" RETURN f.id, a.id, f.relation, b.id, f.fact, f.created, f.valid, f.invalidated, f.uses, "
+               "f.reinforced, f.reason")
         return [dict(id=r[0], source=r[1], relation=r[2], target=r[3], fact=r[4], created=r[5], valid=r[6],
-                     invalidated=r[7]) for r in self.q(cy, params)]
+                     invalidated=r[7] or "", uses=r[8] or 0, reinforced=r[9] or "", reason=r[10] or "")
+                for r in self.q(cy, params)]
+
+    # ------------------------------------------------------------------ digests (daily summaries)
+    def save_digest(self, date: str, text: str, entity_ids: list[str]):
+        did = f"day-{date}"
+        self.q("MATCH (d:Digest {id:$id}) DETACH DELETE d", {"id": did})
+        self.q("CREATE (:Digest {id:$id, date:$d, text:$x, created:$t})", {"id": did, "d": date, "x": text, "t": now()})
+        for e in set(entity_ids):
+            self.q("MATCH (d:Digest {id:$p}), (e:Entity {id:$e}) CREATE (d)-[:Covers]->(e)", {"p": did, "e": e})
+
+    def digests(self, limit: int = 0) -> list[dict]:
+        rows = self.q("MATCH (d:Digest) RETURN d.date, d.text, d.created ORDER BY d.date DESC"
+                      + (f" LIMIT {int(limit)}" if limit else ""))
+        return [dict(date=r[0], text=r[1], created=r[2]) for r in rows]
+
+    def episodes(self, since: str = "") -> list[dict]:
+        rows = self.q("MATCH (p:Episode) WHERE p.created >= $s OPTIONAL MATCH (p)-[:Mentions]->(e:Entity) "
+                      "RETURN p.id, p.text, p.created, collect(e.id) ORDER BY p.created", {"s": since})
+        return [dict(id=r[0], text=r[1], created=r[2], entities=[x for x in (r[3] or []) if x]) for r in rows]
+
+    def delete_episodes(self, ids: list[str]):
+        if ids:
+            self.q("MATCH (p:Episode) WHERE p.id IN $ids DETACH DELETE p", {"ids": list(ids)})
 
     def search(self, query: str, limit: int = 12) -> dict:
         """Lexical seed match on entity names/summaries/facts, then 1-hop graph expansion."""
@@ -221,6 +306,12 @@ class GraphMemory:
                         continue
                     chosen.setdefault(f["id"], f)
         facts = list(chosen.values())[: limit * 2]
+        direct = [f["id"] for _, f in fact_hits]
+        if direct:
+            try:
+                self.reinforce(direct[:limit])
+            except Exception:  # noqa: BLE001  (never let bookkeeping break recall)
+                pass
         node_ids = list(dict.fromkeys(seeds + [n for f in facts for n in (f["source"], f["target"])]))
         lines = []
         for f in facts:
@@ -230,7 +321,25 @@ class GraphMemory:
             e = ents.get(n)
             if e and e["summary"] and n != USER_ID:
                 lines.append(f"- {e['name']} ({e['type']}): {e['summary']}")
+        for d in self._digest_hits(kws, seeds):
+            lines.append(f"- On {d['date']}: {d['text']}")
         return {"query": query, "nodes": node_ids, "edges": [f["id"] for f in facts], "text": "\n".join(lines)}
+
+    def _digest_hits(self, kws: list[str], seeds: list[str], limit: int = 2) -> list[dict]:
+        """Daily summaries that match the query words or cover the matched entities."""
+        if not kws:
+            return []
+        rows = self.q("MATCH (d:Digest) OPTIONAL MATCH (d)-[:Covers]->(e:Entity) RETURN d.date, d.text, collect(e.id)")
+        scored = []
+        for date, text, ents in rows:
+            low = (text or "").lower()
+            s = sum(1 for k in kws if k in low) + 0.5 * len(set(ents or []) & (set(seeds) - {USER_ID}))
+            if date and any(k in date for k in kws):
+                s += 2
+            if s >= 1.5:
+                scored.append((s, date, text))
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        return [dict(date=d, text=t) for _, d, t in scored[:limit]]
 
     def user_profile(self, limit: int = 20) -> str:
         ents = {e["id"]: e for e in self.entities()}

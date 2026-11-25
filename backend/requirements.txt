@@ -14,6 +14,10 @@ soundfile>=0.12
 numpy>=1.26
 # long-term graph memory (embedded graph DB, maintained fork of Kuzu)
 real_ladybug>=0.15
+# your files in memory: PDF and Word text, folder watching
+pypdf>=5.0
+python-docx>=1.1
+watchdog>=4.0
 # computer & browser use
 pyautogui>=0.9.54
 pynput>=1.7
