@@ -8,6 +8,11 @@ onnxruntime, which Jarvis already ships for Kokoro, so no extra Python packages 
 
 It costs a few percent of one CPU core, so it is fine on low-end machines. If the models can't be
 loaded, the session falls back to spotting "Jarvis" in transcripts.
+
+v0.11: personal wake word. The stock model was trained on synthetic American voices and can score a
+real voice, accent or cheap mic well under its threshold. After you record yourself saying the wake
+word a few times (voicetrain.py), the 16x96 embedding windows at the end of each take become personal
+templates: the detector also fires when the live window is close enough (cosine) to one of yours.
 """
 from __future__ import annotations
 
@@ -38,15 +43,34 @@ class WakeWord:
         self._ww_in = self.ww.get_inputs()[0].name
         self.threshold = threshold
         self.name = name
+        self.profile = None          # personal templates (see set_profile)
+        self.last_sim = 0.0
         self._lock = threading.Lock()
+        self._noise_feats = None
         self.reset()
+
+    def set_profile(self, profile: dict | None):
+        """{templates: (N, 1536), mean: (1536,), sim_thr, gate} from voicetrain.calibrate_wake, or None."""
+        if profile is not None:
+            t = np.asarray(profile["templates"], np.float32)
+            profile = {**profile, "templates": t, "mean": np.asarray(profile["mean"], np.float32)}
+        self.profile = profile
+
+    def similarity(self, window: np.ndarray) -> float:
+        """Best cosine similarity between a 16x96 embedding window and your recorded wake word."""
+        p = self.profile
+        if p is None:
+            return 0.0
+        return float(np.max(p["templates"] @ unit(window.reshape(-1) - p["mean"])))
 
     def reset(self):
         self.raw = np.zeros(CHUNK + 480, np.float32)
         self.pending = np.zeros(0, np.float32)
         self.mels = np.ones((76, 32), np.float32)
-        noise = (np.random.RandomState(0).randint(-1000, 1000, 16000 * 2)).astype(np.float32)
-        self.feats = self._embed_all(noise)
+        if self._noise_feats is None:
+            noise = (np.random.RandomState(0).randint(-1000, 1000, 16000 * 2)).astype(np.float32)
+            self._noise_feats = self._embed_all(noise)
+        self.feats = self._noise_feats.copy()
         self.n = 0
         self.last_fire = 0.0
         self.last_score = 0.0
@@ -82,11 +106,40 @@ class WakeWord:
                 chunk, self.pending = self.pending[:CHUNK], self.pending[CHUNK:]
                 s = self._step(chunk)
                 self.last_score = s
+                hit = s >= self.threshold
+                if not hit and self.profile is not None and self.n > 5:
+                    self.last_sim = self.similarity(self.feats[-16:])
+                    hit = self.last_sim >= self.profile["sim_thr"] and s >= self.profile.get("gate", 0.0)
                 now = time.time()
-                if s >= self.threshold and now - self.last_fire > 2.0:
+                if hit and now - self.last_fire > 2.0:
                     self.last_fire = now
                     fired = True
             return fired
+
+
+    def scan(self, audio: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Run a recording through a fresh copy of the pipeline (the live state is left untouched).
+        Returns (score per 80 ms chunk, the 16x96 embedding window after each chunk)."""
+        with self._lock:
+            saved = (self.raw, self.pending, self.mels, self.feats, self.n)
+            try:
+                self.raw = np.zeros(CHUNK + 480, np.float32)
+                self.mels = np.ones((76, 32), np.float32)
+                self.feats = self._noise_feats.copy()
+                self.n = 0
+                pcm = np.asarray(audio, np.float32) * 32767.0
+                scores, wins = [], []
+                for i in range(0, len(pcm) - CHUNK + 1, CHUNK):
+                    scores.append(self._step(pcm[i:i + CHUNK]))
+                    wins.append(self.feats[-16:].copy())
+                return np.array(scores, np.float32), np.array(wins, np.float32).reshape(len(wins), 16, 96)
+            finally:
+                self.raw, self.pending, self.mels, self.feats, self.n = saved
+
+
+def unit(v: np.ndarray) -> np.ndarray:
+    v = np.asarray(v, np.float32).reshape(-1)
+    return v / (float(np.linalg.norm(v)) + 1e-9)
 
 
 def chime(sr: int = 24000) -> np.ndarray:

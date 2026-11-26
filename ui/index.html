@@ -387,6 +387,31 @@
         <label>Clap sensitivity <small>(higher = softer claps)</small><input id="pv-clap-s" type="number" step="0.05" min="0" max="1" /></label>
         <label class="check"><input type="checkbox" id="pv-clap-ack" /> answer “Yes?”</label>
       </div>
+      <div class="train-box" id="train-box">
+        <div class="train-head">
+          <div>
+            <b>Train on my voice</b>
+            <p class="hint" id="train-status">Record your own wake word and claps so I catch them in your room, with your mic.</p>
+          </div>
+          <div class="row-btns">
+            <button class="pill" id="train-wake" type="button">🎙 Train wake word</button>
+            <button class="pill" id="train-clap" type="button">👏 Train clap</button>
+          </div>
+        </div>
+        <div class="train-run hidden" id="train-run">
+          <div class="train-say" id="train-say"></div>
+          <div class="train-dots" id="train-dots"></div>
+          <p class="hint" id="train-msg"></p>
+          <div class="row-btns">
+            <button class="pill primary" id="train-go" type="button">● Record</button>
+            <button class="pill" id="train-cancel" type="button">Cancel</button>
+          </div>
+        </div>
+        <div class="row-btns train-reset">
+          <button class="pill danger hidden" id="train-forget-wake" type="button">Forget my wake word</button>
+          <button class="pill danger hidden" id="train-forget-clap" type="button">Forget my claps</button>
+        </div>
+      </div>
       <label class="check"><input type="checkbox" id="pv-emotion" /> Notice how you sound (stressed, excited, tired) and adapt my tone</label>
       <label class="check"><input type="checkbox" id="pv-selfcheck" /> Double-check my clicks and typing worked (after-action screenshot)</label>
 

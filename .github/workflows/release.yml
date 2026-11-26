@@ -65,6 +65,7 @@ jobs:
           $pr | ConvertTo-Json -Depth 5
           if ($pr.deps -ne "ok") { Stop-Process -Id $p.Id -Force; throw "face engine missing from the frozen backend: $($pr.deps)" }
           Invoke-RestMethod http://127.0.0.1:8799/api/life/stats | ConvertTo-Json -Depth 4
+          Invoke-RestMethod http://127.0.0.1:8799/api/voice/train | ConvertTo-Json -Depth 4
           Stop-Process -Id $p.Id -Force
           if (-not $ok) { Get-Content "$env:RUNNER_TEMP\backend.log","$env:RUNNER_TEMP\backend.err"; throw "frozen backend did not start" }
 

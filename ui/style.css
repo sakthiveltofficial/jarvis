@@ -329,3 +329,19 @@ textarea { font: 12px/1.45 ui-monospace, "Cascadia Code", Menlo, Consolas, monos
 #tab-presence .row-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 4px; }
 pre.report { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; max-height: 220px; overflow: auto; margin: 8px 0 0; }
 pre.report:empty { display: none; }
+
+/* v0.11: train wake word + clap */
+.train-box { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; margin: 4px 0 10px; }
+.train-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.train-head p { margin: 2px 0 0; }
+.train-box .row-btns { margin: 0; flex-wrap: wrap; }
+.train-box .pill { padding: 6px 12px; font-size: 12px; }
+.train-run { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.train-say { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+.train-say.live { color: var(--bad); }
+.train-dots { display: flex; gap: 6px; margin-bottom: 6px; }
+.train-dots span { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+.train-dots span.done { background: var(--good, #2e9d5b); }
+.train-dots span.now { outline: 2px solid var(--text); outline-offset: 1px; }
+.train-reset { margin-top: 8px !important; }
+.train-reset:empty, .train-reset:not(:has(.pill:not(.hidden))) { display: none; }
