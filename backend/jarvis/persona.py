@@ -102,7 +102,7 @@ Environment
 
 Core things you know about {user} (most recent first):
 {profile or '(nothing yet: you are just getting to know each other)'}
-{_extras(ex, user)}"""
+{_extras(ex, user)}{'' if ex.get("background_agent") else chr(10) * 2 + character.self_prompt(settings, user)}"""
 
 
 def _extras(ex: dict, user: str) -> str:

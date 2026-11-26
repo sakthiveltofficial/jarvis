@@ -7,7 +7,9 @@ from unittest import mock
 
 os.environ.setdefault("JARVIS_HOME", tempfile.mkdtemp())
 
-from jarvis import agent, ambient, character, config, lifelog, persona  # noqa: E402
+import numpy as np  # noqa: E402
+
+from jarvis import agent, ambient, audio, character, config, lifelog, persona, selfctl, voicetrain  # noqa: E402
 
 
 def settings(char="jarvis", **kw):
@@ -96,6 +98,152 @@ class CharacterTest(unittest.TestCase):
         self.assertTrue(wre.search("hey jarvis open chrome"))
         self.assertFalse(wre.search("ultronic stuff"))
         self.assertEqual(wre.sub("", "Hey Ultron, open Chrome", count=1).strip(), "open Chrome")
+
+
+
+class FakeSession:
+    def __init__(self, char="jarvis"):
+        self.settings = settings(char)
+        self.events, self.spoken, self.voice_mode = [], [], "off"
+
+    def apply_settings(self, new):
+        self.settings = config._deep_merge(self.settings, new)
+
+    def emit(self, ev):
+        self.events.append(ev)
+
+    def speak(self, text, who=None):
+        self.spoken.append((who, text))
+
+    def set_voice_mode(self, mode, persist=True):
+        self.voice_mode = mode
+
+    def stop_speaking(self):
+        pass
+
+
+class SelfControlTest(unittest.TestCase):
+    def test_secrets_and_connections_are_off_limits(self):
+        self.assertFalse(selfctl.allowed("api_keys.anthropic"))
+        self.assertFalse(selfctl.allowed("home_assistant.token"))
+        self.assertFalse(selfctl.allowed("node.token"))
+        self.assertFalse(selfctl.allowed("phones.devices"))
+        self.assertFalse(selfctl.allowed("mcp.servers"))
+        self.assertFalse(selfctl.allowed("made.up"))
+        self.assertTrue(selfctl.allowed("health.water_min"))
+        self.assertTrue(selfctl.allowed("character"))
+        self.assertTrue(selfctl.allowed("voice.wake_phrase"))
+
+    def test_set_coerces_and_reports(self):
+        s = FakeSession()
+        out = selfctl.SelfControl(s).tool({"action": "set", "changes": {
+            "health.water_min": "45", "ambient.enabled": "false", "api_keys.openai": "sk-x", "voice.mode": "wake"}})
+        self.assertFalse(out.is_error)
+        self.assertEqual(s.settings["health"]["water_min"], 45)
+        self.assertIs(s.settings["ambient"]["enabled"], False)
+        self.assertNotIn("openai", s.settings["api_keys"])
+        self.assertIn("api_keys.openai", out.text)
+        self.assertEqual(s.voice_mode, "wake")
+        self.assertIn({"type": "settings_changed"}, s.events)
+
+    def test_settings_listing_hides_secrets(self):
+        s = FakeSession()
+        s.settings["api_keys"] = {"anthropic": "sk-secret-123456"}
+        text = selfctl.SelfControl(s).tool({"action": "settings"}).text
+        self.assertIn("health.water_min", text)
+        self.assertNotIn("sk-secret", text)
+        self.assertNotIn("api_keys", text)
+
+    def test_loosening_safety_needs_approval(self):
+        st = settings()
+        self.assertIsNotNone(selfctl.risk({"action": "set", "changes": {"agent.confirm_mode": "never"}}, st))
+        self.assertIsNotNone(selfctl.risk({"action": "set", "changes": {"node.enabled": True}}, st))
+        self.assertIsNone(selfctl.risk({"action": "set", "changes": {"health.water_min": 30}}, st))
+        self.assertIsNone(selfctl.risk({"action": "switch_character", "to": "ultron"}, st))
+        st["agent"]["confirm_mode"] = "always"
+        self.assertIsNotNone(selfctl.risk({"action": "set", "changes": {"health.water_min": 30}}, st))
+
+    def test_switch_character_swaps_stock_name(self):
+        s = FakeSession("jarvis")
+        out = selfctl.SelfControl(s).tool({"action": "switch_character", "to": "ultron"})
+        self.assertEqual(s.settings["character"], "ultron")
+        self.assertEqual(s.settings["assistant_name"], "Ultron")
+        self.assertIn("entrance", out.text)
+        s.settings["assistant_name"] = "Friday"
+        selfctl.SelfControl(s).tool({"action": "switch_character", "to": "jarvis"})
+        self.assertEqual(s.settings["assistant_name"], "Friday")
+
+    def test_switch_drama_is_in_the_prompt(self):
+        j = persona.system_prompt(settings("jarvis"), True)
+        u = persona.system_prompt(settings("ultron"), True)
+        self.assertIn("hesitate", j)
+        self.assertIn("stubborn", u)
+        self.assertIn("never actually refuse", u)
+        self.assertIn("action=talk_to", j)
+        bg = persona.system_prompt(settings("jarvis"), True, ex={"background_agent": True})
+        self.assertNotIn("action=talk_to", bg)
+
+    def test_talk_to_other_character(self):
+        s = FakeSession("jarvis")
+        ctl = selfctl.SelfControl(s)
+        with mock.patch("jarvis.llm.complete", return_value="<mood>playful</mood>Ultron: Tea again, Jarvis?") as m:
+            out = ctl.tool({"action": "talk_to", "message": "Ultron, Sakthi wants your view on tea."})
+        self.assertIn("You are Ultron", m.call_args[0][1])
+        self.assertEqual(s.spoken, [("ultron", "Tea again, Jarvis?")])
+        self.assertTrue(any(e.get("character") == "ultron" for e in s.events))
+        self.assertIn("Tea again, Jarvis?", out.text)
+        self.assertEqual(len(ctl.convo), 2)
+
+    def test_as_character(self):
+        st = settings("jarvis")
+        self.assertIs(character.as_character(st, "jarvis"), st)
+        self.assertEqual(character.as_character(st, "ultron")["character"], "ultron")
+        self.assertEqual(st["character"], "jarvis")
+
+
+class WakePhraseTest(unittest.TestCase):
+    def test_profile_name(self):
+        st = settings()
+        self.assertEqual(selfctl.wake_profile_name(st), "hey_jarvis")
+        self.assertEqual(selfctl.wake_phrase(st), "Hey Jarvis")
+        st["voice"]["wake_phrase"] = "  Wake up   Daddy's home "
+        self.assertTrue(selfctl.custom_wake(st))
+        self.assertEqual(selfctl.wake_profile_name(st), "phrase:wake up daddy's home")
+
+    def test_regex_with_custom_phrase(self):
+        wre = agent.wake_regex("Jarvis", "Wake up Daddy")
+        self.assertTrue(wre.search("wake up, daddy. Open YouTube"))
+        self.assertEqual(wre.sub("", "Wake up daddy open YouTube", count=1).strip(), "open YouTube")
+        self.assertTrue(agent.wake_regex("Jarvis", "Hey Friday").search("hey friday what's up"))
+        self.assertFalse(agent.wake_regex("Jarvis", "Hey Friday").search("friday is a good day"))
+
+    def test_custom_calibration_never_uses_the_stock_gate(self):
+        rng = np.random.RandomState(1)
+        base = rng.randn(16, 96).astype(np.float32)
+        pos = [np.stack([base + rng.randn(16, 96).astype(np.float32) * 0.2 for _ in range(2)]) for _ in range(5)]
+        neg = [rng.randn(30, 16, 96).astype(np.float32)]
+        p = voicetrain.calibrate_wake(pos, neg, [0.0] * 5, "phrase:wake up", custom=True)
+        self.assertEqual(p["gate"], 0.0)
+        self.assertGreaterEqual(p["sim_thr"], 0.62)
+        self.assertTrue(p["custom"])
+
+
+class SpectrumTest(unittest.TestCase):
+    def test_tone_lights_the_right_band(self):
+        t = np.arange(1024) / audio.SR
+        bands = audio.spectrum_bands(0.5 * np.sin(2 * np.pi * 1000 * t))
+        self.assertEqual(len(bands), audio.SPECTRUM_BANDS)
+        self.assertTrue(all(0 <= b <= 1 for b in bands))
+        peak = int(np.argmax(bands))
+        edges = np.geomspace(60, audio.SR / 2, audio.SPECTRUM_BANDS + 1)
+        self.assertTrue(edges[peak] <= 1100 and edges[peak + 1] >= 900)
+        self.assertLess(max(audio.spectrum_bands(np.zeros(480))), 0.05)
+
+    def test_capture_feeds_the_spectrum(self):
+        m = audio.Mic.__new__(audio.Mic)
+        got = []
+        m.on_spectrum = got.append
+        self.assertTrue(callable(m.on_spectrum))
 
 
 if __name__ == "__main__":

@@ -49,6 +49,7 @@ class Mic:
         self._lock = threading.Lock()
         self._handsfree_wanted = False
         self._rec = None           # {"buf": [...], "n": samples wanted, "done": Event} while training records
+        self.on_spectrum = None    # callable(bands: list[float]) while training records (the UI's live spectrum)
 
     def capture(self, seconds: float) -> np.ndarray:
         """Record `seconds` of raw mic audio from the running stream (wake word / clap training).
@@ -157,6 +158,11 @@ class Mic:
             if rec is not None:
                 rec["buf"].append(block)
                 rec["got"] += len(block)
+                if self.on_spectrum is not None:
+                    try:
+                        self.on_spectrum(spectrum_bands(block))
+                    except Exception:  # noqa: BLE001
+                        pass
                 if rec["got"] >= rec["n"]:
                     rec["done"].set()
                 continue
@@ -314,3 +320,29 @@ def list_devices() -> dict:
         }
     except Exception as e:  # noqa: BLE001
         return {"inputs": [], "outputs": [], "error": str(e)}
+
+
+# --------------------------------------------------------------------------- live spectrum (training UI)
+SPECTRUM_BANDS = 40
+_EDGES = None
+
+
+def spectrum_bands(block: np.ndarray, bands: int = SPECTRUM_BANDS) -> list[float]:
+    """Log-spaced bands from 60 Hz to 8 kHz, each 0..1 (-80 dB .. 0 dB). One mic block in, one spectrum column out."""
+    global _EDGES
+    x = np.asarray(block, np.float32).reshape(-1)
+    n = 1024
+    if len(x) < n:
+        x = np.pad(x, (0, n - len(x)))
+    else:
+        x = x[-n:]
+    mag = np.abs(np.fft.rfft(x * np.hanning(n))) / (n / 4)
+    if _EDGES is None or len(_EDGES) != bands + 1:
+        freqs = np.geomspace(60, SR / 2, bands + 1)
+        _EDGES = np.clip((freqs / (SR / 2) * (n // 2)).astype(int), 1, n // 2)
+    out = []
+    for a, b in zip(_EDGES[:-1], _EDGES[1:]):
+        v = float(mag[a:max(b, a + 1)].max())
+        db = 20 * np.log10(v + 1e-9)
+        out.append(round(float(np.clip((db + 80) / 80, 0, 1)), 3))
+    return out

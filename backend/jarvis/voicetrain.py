@@ -134,13 +134,21 @@ def speech_end(audio: np.ndarray) -> int | None:
     return int(loud[-1]) if len(loud) else None
 
 
-def check_wake_take(ww, audio: np.ndarray) -> dict:
-    """One "Hey Jarvis" take: the stock model's best score and the windows around where you finished."""
+def check_wake_take(ww, audio: np.ndarray, custom: bool = False) -> dict:
+    """One wake word take: the stock model's best score and the windows around where you finished.
+    custom: your own wake phrase, so the stock "Hey Jarvis" score means nothing; the window where you finish counts."""
     scores, wins = ww.scan(audio)
     end = speech_end(audio)
     if end is None or len(scores) < 8:
         return {"ok": False, "message": "I didn't hear anything. Speak up, or check the microphone.",
                 "score": 0.0}
+    if custom:
+        if end < 6:
+            return {"ok": False, "message": "Start speaking a moment after the beep, and finish before it ends.",
+                    "score": 0.0}
+        i = min(end + 1, len(scores) - 1)
+        idx = sorted({max(6, i - 1), i, min(i + 1, len(scores) - 1)})
+        return {"ok": True, "message": "Got it.", "score": 0.0, "windows": wins[idx], "_end": end}
     lo, hi = max(6, end - 2), min(len(scores) - 1, end + 4)
     if lo > hi:
         return {"ok": False, "message": "Start speaking a moment after the beep, and finish before it ends.",
@@ -162,7 +170,8 @@ def check_negative_take(ww, audio: np.ndarray) -> dict:
     return {"ok": True, "message": "Got it.", "windows": wins[6:], "score": round(float(scores[6:].max(initial=0)), 3)}
 
 
-def calibrate_wake(pos: list[np.ndarray], neg: list[np.ndarray], pos_scores: list[float], name: str) -> dict:
+def calibrate_wake(pos: list[np.ndarray], neg: list[np.ndarray], pos_scores: list[float], name: str,
+                   custom: bool = False) -> dict:
     """pos: per take, a few (16, 96) windows; neg: (M, 16, 96) windows of normal speech / room noise."""
     if len(pos) < 3:
         raise ValueError("I need at least three good wake word takes. Record a few more.")
@@ -192,10 +201,11 @@ def calibrate_wake(pos: list[np.ndarray], neg: list[np.ndarray], pos_scores: lis
     else:
         sim_thr = neg_hi + 0.03                             # stay above normal speech, even if it misses some
         quality = "weak"
-    sim_thr = float(np.clip(sim_thr, 0.55, 0.97))
-    gate = float(min(0.02, 0.25 * min(pos_scores))) if pos_scores else 0.0
+    # a custom phrase has only your templates to go on (no stock model to agree), so it never goes as low
+    sim_thr = float(np.clip(sim_thr, 0.62 if custom else 0.55, 0.97))
+    gate = 0.0 if custom else (float(min(0.02, 0.25 * min(pos_scores))) if pos_scores else 0.0)
     return {"templates": templates.astype(np.float32), "mean": mean.astype(np.float32), "sim_thr": sim_thr,
-            "gate": gate, "name": name, "pos_lo": round(pos_lo, 3), "neg_hi": round(neg_hi, 3),
+            "gate": gate, "name": name, "custom": custom, "pos_lo": round(pos_lo, 3), "neg_hi": round(neg_hi, 3),
             "quality": quality, "takes": len(pos), "scores": [round(s, 3) for s in pos_scores],
             "trained_at": time.strftime("%Y-%m-%d %H:%M")}
 
@@ -221,7 +231,7 @@ def load_wake_profile(name: str | None = None) -> dict | None:
 def _summary_wake(p: dict | None) -> dict | None:
     if not p:
         return None
-    return {k: p.get(k) for k in ("takes", "quality", "sim_thr", "scores", "trained_at", "name")}
+    return {k: p.get(k) for k in ("takes", "quality", "sim_thr", "scores", "trained_at", "name", "custom")}
 
 
 # --------------------------------------------------------------------------- the guided flow
@@ -244,9 +254,18 @@ class Trainer:
             self._ww = WakeWord(v.get("wake_word", "hey_jarvis"), float(v.get("wake_threshold", 0.5)))
         return self._ww
 
+    def _profile_name(self) -> str:
+        from .selfctl import wake_profile_name
+        return wake_profile_name(self.s.settings)
+
+    def _custom(self) -> bool:
+        from .selfctl import custom_wake
+        return custom_wake(self.s.settings)
+
     def status(self) -> dict:
-        v = self.s.settings.get("voice", {})
-        return {"wake": _summary_wake(load_wake_profile(v.get("wake_word", "hey_jarvis"))),
+        from .selfctl import wake_phrase
+        return {"wake": _summary_wake(load_wake_profile(self._profile_name())), "phrase": wake_phrase(self.s.settings),
+                "custom": self._custom(),
                 "clap": load_clap_profile(), "wake_takes": WAKE_TAKES, "clap_takes": CLAP_TAKES,
                 "kind": self.kind, "recorded": len(self.takes)}
 
@@ -270,7 +289,7 @@ class Trainer:
                     self.takes.append({"step": "pos", "audio": audio})
             else:
                 ww = self._wake_model()
-                r = check_wake_take(ww, audio) if step == "pos" else check_negative_take(ww, audio)
+                r = check_wake_take(ww, audio, self._custom()) if step == "pos" else check_negative_take(ww, audio)
                 if r["ok"]:
                     self.takes.append({"step": step, "windows": r.pop("windows"), "score": r.get("score", 0.0)})
                 r.pop("windows", None)
@@ -292,14 +311,19 @@ class Trainer:
                        f"{len(self.takes)} of them.")
                 out = {"ok": True, "message": msg, "profile": p}
             else:
-                ww = self._wake_model()
                 pos = [t["windows"] for t in self.takes if t["step"] == "pos"]
                 neg = [t["windows"] for t in self.takes if t["step"] == "neg"]
                 scores = [t["score"] for t in self.takes if t["step"] == "pos"]
-                p = calibrate_wake(pos, neg, scores, ww.name)
+                p = calibrate_wake(pos, neg, scores, self._profile_name(), self._custom())
                 save_wake_profile(p)
                 for w in {id(x): x for x in (self.s.mic.wake, self._ww) if x is not None}.values():
+                    w.custom = self._custom()
                     w.set_profile(p)
+                if self.s.mic.wake is None and getattr(self.s, "voice_mode", "") == "wake":
+                    try:                         # a custom phrase was waiting for training: switch the detector on
+                        self.s.set_voice_mode("wake", False)
+                    except Exception:  # noqa: BLE001
+                        pass
                 msg = f"Wake word trained on {p['takes']} takes of your voice."
                 if p["quality"] == "weak":
                     msg += (" Your takes sounded a lot like your normal talking, so I set it on the safe side."

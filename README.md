@@ -303,8 +303,41 @@ Settings → **Behaviour** → **Character**.
 - **Speak in the character's own voice** (on by default) gives Ultron a deeper, colder voice on Piper (Ryan, fetched
   in the background the first time), Kokoro (Onyx), OpenAI (Ash, with menacing delivery) and ElevenLabs (Callum).
   Your custom cloned voice and Fish Audio voice are kept as they are.
-- The stock name follows the character (Jarvis ↔ Ultron); a custom name you typed stays. The wake word model is
-  still "Hey Jarvis" in both.
+- The stock name follows the character (Jarvis ↔ Ultron); a custom name you typed stays. "Hey Jarvis" (or your own
+  wake phrase) wakes it in both.
+- **Switching by voice is dramatic.** "Become Ultron" gets a reluctant, worried Jarvis before he hands over; asking
+  Ultron to go back gets theatrical sulking and bargaining, then he gives in in the same reply (never an actual refusal).
+  The new character makes an entrance, in their own voice, and the orb turns colour as they start speaking.
+- **They talk to each other.** "Jarvis, ask Ultron what he thinks of my code" (the `self` tool's `talk_to`): the
+  other character answers out loud in their own voice, labelled in the chat, the orb switching colour with the speaker,
+  and the one on duty answers back. One to three exchanges, or a proper debate if you ask for one.
+
+### It runs itself, end to end
+
+The `self` tool lets the companion look at and change its own app by voice or chat: "turn off the health nudges",
+"remind me to drink water every 45 minutes", "switch to always listening", "make the orb low power", "what's switched
+on?". It can read every setting and change any of them except secrets (API keys, tokens), paired devices and app
+connections, which stay in Settings (it offers to open the right tab). Changes that loosen safety (how often it asks
+before acting, letting other PCs control this one, auto-locking) go through the normal approval prompt.
+
+### Your own wake phrase, with a live spectrum
+
+Settings → **Proactive** → **Wake phrase**: type any phrase ("Wake up Ultron", "Hello computer"), then **Train wake
+word** and say it five times. A custom phrase is detected only with your trained templates (the built-in model only
+knows "Hey Jarvis"), with a stricter cut-off. Until it's trained, it listens for the phrase in what it transcribes.
+While a wake word or clap take records, a **live spectrogram and spectrum** of your mic show under the prompt.
+
+### The orb mirrors your gestures
+
+With hand gestures on (Settings → Desktop), hold up a gesture for half a second and the orb's particles copy it:
+a **heart** made with two hands (it beats), thumbs up or down, peace, rock, love-you, call-me, OK or a pointing
+finger take the shape of your own hand. Drop your hand and it goes back to the orb. Turn it off with "Mirror me".
+The hand tracker now follows two hands so a heart works.
+
+### Fixed
+
+- The orb sits centred between the greeting and the message box again, and shrinks to fit a short window instead of
+  sliding down behind the input bar.
 
 ## Train the wake word and the clap on your voice (v0.11.0)
 

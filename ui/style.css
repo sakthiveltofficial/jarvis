@@ -81,8 +81,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .rail { position: absolute; left: 22px; top: 50%; transform: translateY(-30%); display: flex; flex-direction: column; gap: 8px; z-index: 3; }
 .rail .icon-btn { background: var(--glass-strong); backdrop-filter: blur(8px); }
 
-.presence { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; }
-#orb, #orb3d { width: min(100%, 64vh, 560px); aspect-ratio: 1; height: auto; }
+/* The orb is sized to fit the space left between the greeting and the composer (container units), and centred in it,
+   so a long greeting or a short window can't push it down behind the composer. */
+.presence { position: relative; flex: 1; min-height: 0; container-type: size; }
+#orb, #orb3d { position: absolute; inset: 0; margin: auto; width: min(100cqw, 100cqh, 560px); height: min(100cqw, 100cqh, 560px); }
 #orb3d { display: block; pointer-events: none; }
 .callout { position: absolute; display: flex; flex-direction: column; font-size: 12px; color: var(--muted); padding-left: 16px; }
 .callout b { color: var(--text); font-weight: 400; font-size: 20px; letter-spacing: -.01em; text-transform: capitalize; line-height: 1.2; }
@@ -344,4 +346,10 @@ pre.report:empty { display: none; }
 .train-dots span.done { background: var(--good, #2e9d5b); }
 .train-dots span.now { outline: 2px solid var(--text); outline-offset: 1px; }
 .train-reset { margin-top: 8px !important; }
+.train-spec { display: flex; gap: 8px; margin: 6px 0 8px; }
+.train-spec canvas { height: 90px; border-radius: 10px; background: #0b0d10; min-width: 0; }
+#train-spectro { flex: 1 1 auto; width: 100%; }
+#train-bars { flex: 0 0 120px; width: 120px; }
+.msg.assistant.other { border-left: 3px solid var(--other, #e0413a); }
+.msg.assistant .who { display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .7; margin-bottom: 2px; }
 .train-reset:empty, .train-reset:not(:has(.pill:not(.hidden))) { display: none; }

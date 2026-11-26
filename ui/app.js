@@ -50,7 +50,10 @@ function onEvent(ev) {
     case "teach": teaching = ev.on; renderTeach(); break;
     case "skills": if (!$("tab-skills").classList.contains("hidden")) loadSkills(); break;
     case "user": addMsg("user", ev.text); break;
-    case "assistant": addMsg("assistant", ev.text, ev.proactive); break;
+    case "assistant": addMsg("assistant", ev.text, ev.proactive, ev.character); break;
+    case "settings_changed": loadSettings(); break;            // changed by voice/chat (the `self` tool)
+    case "open_settings": openSettings().then(() => document.querySelector(`.tabs button[data-tab="${ev.tab}"]`)?.click()); break;
+    case "spectrum": drawSpectrum(ev.bands); break;
     case "info": addMsg("info", ev.text); break;
     case "error": addMsg("error", ev.text); break;
     case "tool_start": if (!ev.agent) addTool(ev); break;
@@ -83,11 +86,15 @@ function setStatus() {
   $("state-dot").classList.toggle("busy", state !== "idle");
 }
 
-function addMsg(kind, text, proactive) {
+function addMsg(kind, text, proactive, who) {
   const d = document.createElement("div");
-  d.className = "msg " + kind + (proactive ? " proactive" : "");
+  // a line from the other character (Jarvis and Ultron talking) gets their name and colour
+  const other = kind === "assistant" && who && who !== charKey();
+  d.className = "msg " + kind + (proactive ? " proactive" : "") + (other ? " other" : "");
+  if (other) d.style.setProperty("--other", who === "ultron" ? "#e0413a" : "#3d8bff");
   if (proactive) d.title = { reminder: "Reminder", offer: "Said on my own", clap: "You clapped", background: "Background task", teach: "Teach mode", skill: "New skill", presence: "At the desk", health: "Health nudge", report: "Weekly life report" }[proactive] || proactive;
   d.textContent = text;
+  if (other) { const w = document.createElement("span"); w.className = "who"; w.textContent = CHAR_NAMES[who] || who; d.prepend(w); }
   if (kind === "user" || kind === "assistant") $("convo-count").textContent = `${++msgCount} messages`;
   $("transcript").appendChild(d);
   d.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -165,7 +172,7 @@ function renderHandsfree() {
   const name = aname();
   const clap = settings?.voice?.clap !== false ? " or clap twice" : "";
   // the wake word model is always "Hey Jarvis"; without it, the name is spotted in what you say
-  const label = { off: "push to talk", wake: (wakeReady ? "say “Hey Jarvis”" : `say “${name}…”`) + clap, handsfree: "always listening" }[voiceMode];
+  const label = { off: "push to talk", wake: (wakeReady || settings?.voice?.wake_phrase ? `say “${wakePhrase()}”` : `say “${name}…”`) + clap, handsfree: "always listening" }[voiceMode];
   $("btn-handsfree").classList.toggle("on", voiceMode !== "off");
   $("btn-handsfree").title = `Listening: ${label} (click to change)`;
   $("hf-label").textContent = label;
@@ -272,6 +279,7 @@ $("btn-new").onclick = async () => {
 // ------------------------------------------------------------------ presence (soft gradient + wireframe)
 // ------------------------------------------------------------------ character (Jarvis / Ultron, see character.py)
 const CHAR_NAMES = { jarvis: "Jarvis", ultron: "Ultron" };
+const wakePhrase = () => (settings?.voice?.wake_phrase || "").trim() || "Hey Jarvis";
 const charKey = () => (CHAR_NAMES[settings?.character] ? settings.character : "jarvis");
 // a custom assistant name wins; the stock names follow the character
 function aname() {
@@ -380,13 +388,15 @@ async function applyOrb() {
   } else if (!want && orb3d) {
     orb3d.destroy(); orb3d = null;
   }
-  if (orb3d) { orb3d.setQuality(ui.orb_quality || "auto"); orb3d.setCharacter(charKey()); }
+  if (orb3d) { orb3d.setQuality(ui.orb_quality || "auto"); if (state !== "speaking") orb3d.setCharacter(charKey()); }
   $("orb").classList.toggle("hidden", !!orb3d);
 }
 function orbEvent(ev) {
   if (!orb3d || ev.agent) return;
   switch (ev.type) {
-    case "state": orb3d.setState(ev.state); break;
+    case "state": orb3d.setState(ev.state); if (ev.state !== "speaking") orb3d.setCharacter(charKey()); break;
+    case "speaker": orb3d.setCharacter(ev.character); break;
+    case "mirror": if (settings?.gestures?.mirror !== false) orb3d.mirror(ev); break;
     case "level": orb3d.level(ev.source, ev.value); break;
     case "mood": orb3d.userMood(ev.mood); break;
     case "ai_mood": orb3d.aiMood(ev.mood); break;
@@ -650,7 +660,7 @@ async function openSettings() {
   $("hud-on").checked = hd.enabled !== false; $("hud-show").value = hd.show || "active";
   $("hud-stats").checked = hd.stats !== false; $("hud-hand").checked = hd.hand !== false;
   $("gs-on").checked = !!gs.enabled; $("gs-cam").value = gs.camera ?? 0; $("gs-sens").value = gs.sensitivity ?? 0.5;
-  for (const k of ["palm", "fist", "windows", "orb"]) $("gs-" + k).checked = gs[k] !== false;
+  for (const k of ["palm", "fist", "windows", "orb", "mirror"]) $("gs-" + k).checked = gs[k] !== false;
   loadGestureStatus();
   const pr = s.presence || {}, he = s.health || {}, lf = s.life || {};
   $("pr-on").checked = !!pr.enabled; $("pr-greet").checked = pr.greet !== false; $("pr-greet-min").value = pr.greet_after_min ?? 20;
@@ -679,6 +689,7 @@ async function openSettings() {
   $("barge-ms").value = s.audio.barge_check_ms ?? 900;
   const v = s.voice || {}, br = s.briefings || {}, aw = s.awareness || {}, nd = s.node || {};
   $("pv-mode").value = v.mode || "wake"; $("pv-thr").value = v.wake_threshold ?? 0.5;
+  $("pv-phrase").value = v.wake_phrase || "";
   $("pv-follow").value = v.follow_up_s ?? 10; $("pv-listen").value = v.listen_s ?? 8;
   $("pv-chime").checked = v.chime !== false; $("pv-emotion").checked = v.emotion !== false;
   $("pv-clap").checked = v.clap !== false; $("pv-clap-s").value = v.clap_sensitivity ?? 0.5; $("pv-clap-ack").checked = v.clap_ack !== false;
@@ -750,7 +761,7 @@ function collect() {
     ui: { orb: $("ui-orb").checked, orb_quality: $("ui-orb-q").value },
     hud: { enabled: $("hud-on").checked, show: $("hud-show").value, stats: $("hud-stats").checked, hand: $("hud-hand").checked },
     gestures: { enabled: $("gs-on").checked, camera: Number($("gs-cam").value || 0), sensitivity: Number($("gs-sens").value || 0.5),
-                palm: $("gs-palm").checked, fist: $("gs-fist").checked, windows: $("gs-windows").checked, orb: $("gs-orb").checked },
+                palm: $("gs-palm").checked, fist: $("gs-fist").checked, windows: $("gs-windows").checked, orb: $("gs-orb").checked, mirror: $("gs-mirror").checked },
     presence: { enabled: $("pr-on").checked, greet: $("pr-greet").checked, greet_after_min: Number($("pr-greet-min").value || 20),
                 lock_on_leave: $("pr-lock").checked, lock_after_s: Number($("pr-lock-s").value || 45), stranger_alert: $("pr-stranger").checked,
                 stranger_lock: $("pr-stranger-lock").checked, visitor_photo: $("pr-photo").checked, match_threshold: Number($("pr-thr").value || 0.38) },
@@ -762,7 +773,7 @@ function collect() {
             speak: $("lf-speak").checked, keep_days: Number($("lf-keep").value || 120), model: $("lf-model").value.trim() },
     agent: { confirm_mode: $("beh-confirm").value, max_steps: Number($("beh-steps").value || 40),
              speak_replies: $("beh-speak").checked, headless_browser: $("beh-headless").checked, self_check: $("pv-selfcheck").checked },
-    voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), follow_up_s: Number($("pv-follow").value || 10),
+    voice: { mode: $("pv-mode").value, wake_threshold: Number($("pv-thr").value || 0.5), wake_phrase: $("pv-phrase").value.trim(), follow_up_s: Number($("pv-follow").value || 10),
              listen_s: Number($("pv-listen").value || 8), chime: $("pv-chime").checked, emotion: $("pv-emotion").checked,
              clap: $("pv-clap").checked, clap_sensitivity: Number($("pv-clap-s").value || 0.5), clap_ack: $("pv-clap-ack").checked },
     ambient: { enabled: $("am-on").checked, quiet_enabled: $("am-quiet").checked, quiet_start: $("am-q-start").value || "23:00",
@@ -826,7 +837,8 @@ async function loadTrain() {
   try {
     const r = await (await fetch(API + "/api/voice/train")).json();
     const parts = [];
-    if (r.wake) parts.push(`Wake word: trained on ${r.wake.takes} takes (${r.wake.trained_at})${r.wake.quality === "weak" ? ", on the safe side" : ""}.`);
+    if (r.wake) parts.push(`Wake phrase “${r.phrase}”: trained on ${r.wake.takes} takes (${r.wake.trained_at})${r.wake.quality === "weak" ? ", on the safe side" : ""}.`);
+    else if (r.custom) parts.push(`Your wake phrase “${r.phrase}” isn't trained yet: until it is, I listen for it in what I transcribe (slower). Train it below.`);
     if (r.clap) parts.push(`Claps: trained on ${r.clap.takes} takes (${r.clap.trained_at}).`);
     $("train-status").textContent = parts.length ? parts.join(" ") : "Record your own wake word and claps so I catch them in your room, with your mic.";
     $("train-status").className = "hint" + (parts.length ? " ok" : "");
@@ -835,10 +847,10 @@ async function loadTrain() {
   } catch (_) {}
 }
 function trainSteps(kind) {
-  const name = "Jarvis";   // the wake word model is "Hey Jarvis" in every character
   if (kind === "clap") return Array.from({ length: 4 }, () => ({ step: "pos", say: "👏👏 Clap twice, then stay quiet", secs: 3 }));
-  const s = Array.from({ length: 5 }, () => ({ step: "pos", say: `Say “Hey ${name}” once, like you normally would`, secs: 2.5 }));
-  s.push({ step: "neg", say: "Now talk normally for a few seconds (anything except my name)", secs: 6 });
+  const phrase = wakePhrase(), secs = phrase.split(/\s+/).length > 3 ? 3.5 : 2.5;
+  const s = Array.from({ length: 5 }, () => ({ step: "pos", say: `Say “${phrase}” once, like you normally would`, secs }));
+  s.push({ step: "neg", say: "Now talk normally for a few seconds (anything except the wake phrase)", secs: 6 });
   return s;
 }
 function renderTrain(msg, cls = "") {
@@ -852,10 +864,48 @@ function renderTrain(msg, cls = "") {
   if (msg !== undefined) { $("train-msg").textContent = msg; $("train-msg").className = "hint " + cls; }
   $("train-go").textContent = st ? `● Record take ${train.i + 1} of ${train.steps.length}` : "Save";
 }
-function startTrain(kind) {
+async function startTrain(kind) {
+  if (kind === "wake") {          // train the phrase typed in the box, even if Settings wasn't saved yet
+    const typed = $("pv-phrase").value.trim();
+    if (typed !== (settings?.voice?.wake_phrase || "").trim()) {
+      await postJson("/api/settings", { voice: { wake_phrase: typed } }).catch(() => {});
+      await loadSettings();
+    }
+  }
+  clearSpectrum();
   train = { kind, steps: trainSteps(kind), i: 0 };
   postJson("/api/voice/train/cancel").catch(() => {});
   renderTrain(kind === "clap" ? "Press Record, wait for the countdown, then clap twice." : "Press Record, then speak when it turns red.");
+}
+// live spectrum while a take records: a scrolling spectrogram (time →, pitch ↑) and the current bars
+const SPEC_COLS = 200;
+let specCols = [];
+function specColour(v) {            // dark → character colour → white, by loudness
+  const base = charKey() === "ultron" ? [255, 42, 42] : [61, 139, 255];
+  const t = Math.max(0, Math.min(1, v));
+  const k = t < 0.7 ? t / 0.7 : 1, w = t < 0.7 ? 0 : (t - 0.7) / 0.3;
+  return base.map((c) => Math.round(11 + (c - 11) * k + (255 - c) * w));
+}
+function clearSpectrum() {
+  specCols = [];
+  for (const id of ["train-spectro", "train-bars"]) { const c = $(id); c.getContext("2d").clearRect(0, 0, c.width, c.height); }
+}
+function drawSpectrum(bands) {
+  if (!bands || $("train-run").classList.contains("hidden")) return;
+  specCols.push(bands); if (specCols.length > SPEC_COLS) specCols.shift();
+  const sp = $("train-spectro"), g = sp.getContext("2d"), W = sp.width, H = sp.height, n = bands.length;
+  const cw = W / SPEC_COLS, bh = H / n;
+  g.clearRect(0, 0, W, H);
+  specCols.forEach((col, x) => col.forEach((v, i) => {
+    const [r, gg, b] = specColour(v);
+    g.fillStyle = `rgb(${r},${gg},${b})`; g.fillRect(x * cw, H - (i + 1) * bh, Math.ceil(cw), Math.ceil(bh));
+  }));
+  const bc = $("train-bars"), h = bc.getContext("2d"), BW = bc.width, BH = bc.height, w = BW / n;
+  h.clearRect(0, 0, BW, BH);
+  bands.forEach((v, i) => {
+    const [r, gg, b] = specColour(Math.min(1, v + 0.25));
+    h.fillStyle = `rgb(${r},${gg},${b})`; const bhh = Math.max(1, v * BH); h.fillRect(i * w + 0.5, BH - bhh, Math.max(1, w - 1), bhh);
+  });
 }
 $("train-wake").onclick = () => startTrain("wake");
 $("train-clap").onclick = () => startTrain("clap");
@@ -1355,5 +1405,5 @@ function onFileSearch(ev) {
   loadAgenda();
   setInterval(renderAgenda, 60000);
   const name = aname();
-  addMsg("info", `Say “Hey ${name}”, hold Space (or the mic) to talk, or type. Open ⚙ to pick your model, voices and apps.`);
+  addMsg("info", `Say “${settings.voice?.wake_phrase ? wakePhrase() : "Hey " + name}”, hold Space (or the mic) to talk, or type. Open ⚙ to pick your model, voices and apps.`);
 })();

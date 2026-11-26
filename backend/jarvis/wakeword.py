@@ -44,6 +44,7 @@ class WakeWord:
         self.threshold = threshold
         self.name = name
         self.profile = None          # personal templates (see set_profile)
+        self.custom = False          # a custom wake phrase: only your trained templates count, not the stock model
         self.last_sim = 0.0
         self._lock = threading.Lock()
         self._noise_feats = None
@@ -106,7 +107,7 @@ class WakeWord:
                 chunk, self.pending = self.pending[:CHUNK], self.pending[CHUNK:]
                 s = self._step(chunk)
                 self.last_score = s
-                hit = s >= self.threshold
+                hit = s >= self.threshold and not self.custom
                 if not hit and self.profile is not None and self.n > 5:
                     self.last_sim = self.similarity(self.feats[-16:])
                     hit = self.last_sim >= self.profile["sim_thr"] and s >= self.profile.get("gate", 0.0)
