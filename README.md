@@ -288,6 +288,24 @@ APK from its Releases, then on the PC open ⚙ → Connections → **My phone** 
 - Prefer not to install an app? [mobile-mcp](https://github.com/mobile-next/mobile-mcp) works as an MCP server under
   Connections → Apps while the phone is connected over (wireless) ADB.
 
+## Train the wake word and the clap on your voice (v0.11.0)
+
+Settings → **Proactive** → Listening → **Train on my voice**.
+
+- **Clap fix.** Real claps through a laptop mic carry most of their energy between about 0.4 and 2.5 kHz. The
+  double-clap detector measured "brightness" in a way that only counted energy above ~2.5 kHz, so many real claps
+  were silently thrown away. It now measures energy above 1 kHz (voices, hums and desk thuds still fail), and a clap
+  that starts late in a 10 ms frame is no longer missed.
+- **Train clap**: clap twice, four times. Jarvis measures how loud your claps are over your room's noise, how
+  bright, how long and how far apart, and sets the detector a safe margin below that. The clap sensitivity slider
+  still nudges the trained values. Saved in `~/.jarvis/clap_profile.json`.
+- **Train wake word**: say "Hey Jarvis" five times, then talk normally for a few seconds. Each take shows how the
+  stock model scored you (it was trained on synthetic voices, so accents and cheap mics often land well under 0.5).
+  Your takes become personal templates and Jarvis also wakes when what it hears is close enough to them, with the
+  cut-off placed above your normal talking. Saved in `~/.jarvis/wake_profile.npz` (numbers only, no audio).
+- Wake word, clap and voice detection pause while a take records. **Forget my wake word / claps** goes back to the
+  built-in detectors.
+
 ## Presence, health nudges and the weekly life report (v0.10.0)
 
 Settings → **Presence**. Everything here stays on this PC.

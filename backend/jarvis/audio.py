@@ -48,6 +48,24 @@ class Mic:
         self._thread = None
         self._lock = threading.Lock()
         self._handsfree_wanted = False
+        self._rec = None           # {"buf": [...], "n": samples wanted, "done": Event} while training records
+
+    def capture(self, seconds: float) -> np.ndarray:
+        """Record `seconds` of raw mic audio from the running stream (wake word / clap training).
+        Wake word, clap and voice detection pause while it records so the samples can't trigger anything."""
+        started = self._stream is None
+        self._ensure_stream()
+        rec = {"buf": [], "n": int(seconds * SR), "got": 0, "done": threading.Event()}
+        self._rec = rec
+        try:
+            if not rec["done"].wait(seconds + 5.0):
+                raise RuntimeError("the microphone stopped sending audio")
+        finally:
+            self._rec = None
+            if started and self.idle_mode == "off" and self.mode == "off":
+                self.close()
+        audio = np.concatenate(rec["buf"]) if rec["buf"] else np.zeros(0, np.float32)
+        return audio[:rec["n"]].astype(np.float32)
 
     # stream lifecycle ---------------------------------------------------------
     def _ensure_stream(self):
@@ -135,6 +153,13 @@ class Mic:
                 self.on_level(min(1.0, rms * 12))
                 last_level = now
 
+            rec = self._rec
+            if rec is not None:
+                rec["buf"].append(block)
+                rec["got"] += len(block)
+                if rec["got"] >= rec["n"]:
+                    rec["done"].set()
+                continue
             if self.mode == "ptt":
                 with self._lock:
                     self._ptt_buf.append(block)

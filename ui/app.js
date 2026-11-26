@@ -613,7 +613,7 @@ async function openSettings() {
   const lg = s.language || {};
   $("lang-mode").value = lg.mode || "ta_en"; $("lang-reply").value = lg.reply || "match";
   $("lang-tvoice").value = lg.tamil_voice || "auto"; $("lang-edge").value = lg.edge_voice || "ta-IN-ValluvarNeural";
-  loadClone();
+  loadClone(); loadTrain();
 
   const d = await (await fetch(API + "/api/audio/devices")).json();
   opt($("audio-in"), [{ value: "", label: "System default" }, ...d.inputs.map((x) => ({ value: x.id, label: x.name }))], s.audio.input_device ?? "");
@@ -792,6 +792,72 @@ $("clone-play").onclick = async () => {
 };
 $("clone-del").onclick = async () => { await postJson("/api/voice/sample", null, "DELETE"); loadClone(); };
 $("clone-text").onchange = () => postJson("/api/voice/sample", { text: $("clone-text").value }).catch(() => {});
+// ------------------------------------------------------------------ v0.11: train the wake word and the clap
+let train = null;   // { kind, steps: [{step, say, secs}], i }
+async function loadTrain() {
+  try {
+    const r = await (await fetch(API + "/api/voice/train")).json();
+    const parts = [];
+    if (r.wake) parts.push(`Wake word: trained on ${r.wake.takes} takes (${r.wake.trained_at})${r.wake.quality === "weak" ? ", on the safe side" : ""}.`);
+    if (r.clap) parts.push(`Claps: trained on ${r.clap.takes} takes (${r.clap.trained_at}).`);
+    $("train-status").textContent = parts.length ? parts.join(" ") : "Record your own wake word and claps so I catch them in your room, with your mic.";
+    $("train-status").className = "hint" + (parts.length ? " ok" : "");
+    $("train-forget-wake").classList.toggle("hidden", !r.wake);
+    $("train-forget-clap").classList.toggle("hidden", !r.clap);
+  } catch (_) {}
+}
+function trainSteps(kind) {
+  const name = settings?.assistant_name || "Jarvis";
+  if (kind === "clap") return Array.from({ length: 4 }, () => ({ step: "pos", say: "👏👏 Clap twice, then stay quiet", secs: 3 }));
+  const s = Array.from({ length: 5 }, () => ({ step: "pos", say: `Say “Hey ${name}” once, like you normally would`, secs: 2.5 }));
+  s.push({ step: "neg", say: "Now talk normally for a few seconds (anything except my name)", secs: 6 });
+  return s;
+}
+function renderTrain(msg, cls = "") {
+  const run = $("train-run");
+  run.classList.toggle("hidden", !train);
+  if (!train) return;
+  const st = train.steps[train.i];
+  $("train-say").textContent = st ? st.say : "All takes recorded.";
+  $("train-say").classList.remove("live");
+  $("train-dots").innerHTML = train.steps.map((_, k) => `<span class="${k < train.i ? "done" : k === train.i ? "now" : ""}"></span>`).join("");
+  if (msg !== undefined) { $("train-msg").textContent = msg; $("train-msg").className = "hint " + cls; }
+  $("train-go").textContent = st ? `● Record take ${train.i + 1} of ${train.steps.length}` : "Save";
+}
+function startTrain(kind) {
+  train = { kind, steps: trainSteps(kind), i: 0 };
+  postJson("/api/voice/train/cancel").catch(() => {});
+  renderTrain(kind === "clap" ? "Press Record, wait for the countdown, then clap twice." : "Press Record, then speak when it turns red.");
+}
+$("train-wake").onclick = () => startTrain("wake");
+$("train-clap").onclick = () => startTrain("clap");
+$("train-cancel").onclick = () => { train = null; postJson("/api/voice/train/cancel").catch(() => {}); renderTrain(); };
+$("train-go").onclick = async () => {
+  if (!train) return;
+  const b = $("train-go"), st = train.steps[train.i];
+  b.disabled = true;
+  try {
+    if (!st) {
+      $("train-msg").textContent = "Working it out…";
+      const r = await postJson("/api/voice/train/finish", { kind: train.kind });
+      train = null; renderTrain();
+      $("train-status").textContent = r.message; $("train-status").className = "hint ok";
+      setTimeout(loadTrain, 4000);
+      return;
+    }
+    for (let n = 3; n > 0; n--) { $("train-say").textContent = `${st.say}… ${n}`; await new Promise((ok) => setTimeout(ok, 600)); }
+    $("train-say").textContent = "● " + st.say; $("train-say").classList.add("live");
+    const r = await postJson("/api/voice/train/record", { kind: train.kind, step: st.step, seconds: st.secs });
+    if (r.ok) train.i++;
+    let extra = "";
+    if (train.kind === "clap" && r.ok && !r.default_fired) extra = " (Before training I would have missed that one.)";
+    renderTrain((r.ok ? "✓ " : "✗ ") + r.message + extra, r.ok ? "ok" : "bad");
+  } catch (err) {
+    renderTrain(err.message, "bad");
+  } finally { b.disabled = false; }
+};
+$("train-forget-wake").onclick = async () => { await postJson("/api/voice/train/wake", null, "DELETE").catch(() => {}); loadTrain(); };
+$("train-forget-clap").onclick = async () => { await postJson("/api/voice/train/clap", null, "DELETE").catch(() => {}); loadTrain(); };
 $("ha-test").onclick = async () => {
   const st = $("ha-status"); st.className = "hint"; st.textContent = "Checking…";
   try {

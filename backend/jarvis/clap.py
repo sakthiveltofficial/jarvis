@@ -9,6 +9,11 @@ so it costs next to nothing next to the wake word model.
     det = ClapDetector(sensitivity=0.5)
     if det.process(block):   # float32 -1..1 at 16 kHz, any length
         ...                  # double clap heard
+
+v0.11: "high-frequency" now means energy above 1 kHz (a real clap through a laptop mic peaks around
+1-2.5 kHz, which the old first-difference measure scored as too dull, so many real claps never
+counted), the onset may build up over two 10 ms frames, and `set_profile()` takes thresholds learned
+from your own recorded claps (see voicetrain.py).
 """
 from __future__ import annotations
 
@@ -28,11 +33,19 @@ class ClapDetector:
     PRE_QUIET = 0.25           # relative quiet needed before the first clap
     MAX_LEN = 0.12             # a clap is louder than half its peak for at most this long
 
-    def __init__(self, sensitivity: float = 0.5, sr: int = SR, clock=None):
+    def __init__(self, sensitivity: float = 0.5, sr: int = SR, clock=None, profile: dict | None = None):
         self.sr = sr
         self.clock = clock          # optional fake clock (tests); default = sample time
+        self.profile = profile or None
+        self.collect = False        # training: keep every clap-like candidate in self.candidates
+        self.candidates: list[dict] = []
         self.set_sensitivity(sensitivity)
         self.reset()
+
+    def set_profile(self, profile: dict | None):
+        """Thresholds learned from your own claps (voicetrain.calibrate_claps); None = built-in defaults."""
+        self.profile = profile or None
+        self.set_sensitivity(self.sensitivity)
 
     def set_sensitivity(self, s: float):
         s = min(1.0, max(0.0, float(s)))
@@ -40,7 +53,18 @@ class ClapDetector:
         # Higher sensitivity = quieter claps count. ratio is "how far above the room's noise floor".
         self.ratio = 40.0 - 32.0 * s            # energy ratio: 40x (~16 dB) .. 8x (~9 dB)
         self.abs_min = 10 ** (-2.6 - 1.8 * s)   # minimum frame energy (~-26 .. -44 dBFS)
-        self.hf_min = 0.30 - 0.10 * s           # share of energy that is high-frequency
+        self.hf_min = 0.40 - 0.16 * s           # share of energy above 1 kHz
+        self.max_len, self.min_gap, self.max_gap = self.MAX_LEN, self.MIN_GAP, self.MAX_GAP
+        p = self.profile
+        if p:
+            # Your trained values sit at sensitivity 0.5; the slider still nudges them (x2 .. x0.5).
+            k = 2.0 ** ((0.5 - s) * 2.0)
+            self.ratio = min(60.0, max(4.0, float(p.get("ratio", self.ratio)) * k))
+            self.abs_min = min(1e-2, max(1e-7, float(p.get("abs_min", self.abs_min)) * k))
+            self.hf_min = min(0.6, max(0.05, float(p.get("hf_min", self.hf_min)) - (s - 0.5) * 0.1))
+            self.max_len = min(0.25, max(0.06, float(p.get("max_len", self.MAX_LEN))))
+            self.min_gap = min(0.3, max(0.06, float(p.get("min_gap", self.MIN_GAP))))
+            self.max_gap = min(1.4, max(self.min_gap + 0.2, float(p.get("max_gap", self.MAX_GAP))))
 
     def reset(self):
         self.pending = np.zeros(0, np.float32)
@@ -55,11 +79,12 @@ class ClapDetector:
 
     # ------------------------------------------------------------------ frame analysis
     @staticmethod
-    def _hf_share(frame: np.ndarray) -> float:
-        """Share of the frame's energy in its first difference (a cheap high-pass, rises above ~2.5 kHz)."""
-        e = float(np.dot(frame, frame)) + 1e-12
-        d = np.diff(frame)
-        return float(np.dot(d, d)) / (2.0 * e)
+    def _hf_share(frame: np.ndarray, sr: int = SR) -> float:
+        """Share of the frame's energy above 1 kHz (claps are broadband; voices, hums and thuds are not)."""
+        p = np.abs(np.fft.rfft(frame)) ** 2
+        k = max(1, int(round(1000 * len(frame) / sr)))
+        tot = float(p[1:].sum()) + 1e-12            # ignore DC
+        return float(p[k:].sum()) / tot
 
     def _frame(self, f: np.ndarray) -> bool:
         e = float(np.dot(f, f)) / len(f)
@@ -74,7 +99,7 @@ class ClapDetector:
                 c["peak"] = e
             if e > c["peak"] * 0.25:              # louder than half the peak amplitude
                 c["loud"] += 1
-            if c["frames"] * 0.01 >= self.MAX_LEN + 0.03 or e < c["peak"] * 0.02:
+            if c["frames"] * 0.01 >= self.max_len + 0.03 or e < c["peak"] * 0.02:
                 self._finish_clap()
         else:
             # Sustained sound (a vowel after a "t", music, a voice) between or after claps breaks the sequence.
@@ -86,13 +111,18 @@ class ClapDetector:
                     self.claps = []
             else:
                 self.loud_run = 0
-            prev = self.hist[-1] if self.hist else self.floor
-            onset = (e > self.floor * self.ratio and e > self.abs_min and e > prev * 4.0
-                     and self._hf_share(f) >= self.hf_min)
-            if onset:
-                pre = max(list(self.hist)[:-1] or [self.floor])
-                self.clap = {"t": now, "peak": e, "loud": 1, "frames": 1, "pre": pre}
-                self.loud_run = 0
+            # The clap may start late in a frame, so compare against the quieter of the last two frames.
+            h = list(self.hist)
+            prev = min(h[-2:]) if h else self.floor
+            if e > self.floor * self.ratio and e > self.abs_min and e > prev * 4.0:
+                hf = self._hf_share(f, self.sr)
+                if hf >= self.hf_min:
+                    pre = max(h[:-2] or [self.floor])
+                    self.clap = {"t": now, "peak": e, "loud": 1, "frames": 1, "pre": pre, "hf": hf,
+                                 "floor": self.floor}
+                    self.loud_run = 0
+                else:
+                    self.last_event = f"too dull for a clap (hf {hf:.2f} < {self.hf_min:.2f})"
 
         # Room noise tracking: follow quiet frames quickly-ish, loud ones only very slowly.
         if self.clap is None:
@@ -105,14 +135,14 @@ class ClapDetector:
             a, b = self.claps[-2], self.claps[-1]
             gap = b["t"] - a["t"]
             similar = max(a["peak"], b["peak"]) / max(1e-12, min(a["peak"], b["peak"])) <= 16.0   # within 12 dB
-            if len(self.claps) == 2 and self.MIN_GAP <= gap <= self.MAX_GAP and similar and now - self.last_fire > 1.5:
+            if len(self.claps) == 2 and self.min_gap <= gap <= self.max_gap and similar and now - self.last_fire > 1.5:
                 fired = True
                 self.last_fire = now
                 self.last_event = f"double clap (gap {gap * 1000:.0f} ms)"
             else:
                 self.last_event = f"rejected: {len(self.claps)} claps, gap {gap * 1000:.0f} ms, similar={similar}"
             self.claps = []
-        elif len(self.claps) == 1 and self.clap is None and now - self.claps[-1]["t"] > self.MAX_GAP:
+        elif len(self.claps) == 1 and self.clap is None and now - self.claps[-1]["t"] > self.max_gap:
             self.last_event = "single clap"
             self.claps = []
         return fired
@@ -120,14 +150,17 @@ class ClapDetector:
     def _finish_clap(self):
         c, self.clap = self.clap, None
         length = c["loud"] * 0.01
-        if length > self.MAX_LEN:
+        c["len"] = length
+        if self.collect:
+            self.candidates.append(dict(c))
+        if length > self.max_len:
             self.last_event = f"too long for a clap ({length * 1000:.0f} ms)"
             self.claps = []                               # a sustained sound breaks any sequence
             return
         if not self.claps and c["pre"] > c["peak"] * 0.06:
             self.last_event = "not quiet before the first clap"
             return
-        if self.claps and c["t"] - self.claps[-1]["t"] > self.MAX_GAP:
+        if self.claps and c["t"] - self.claps[-1]["t"] > self.max_gap:
             self.claps = []
         self.claps.append(c)
 

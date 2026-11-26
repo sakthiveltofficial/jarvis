@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import audio, config, homeassistant, hud, models, nodes, skills, voiceclone
+from . import audio, config, homeassistant, hud, models, nodes, skills, voiceclone, voicetrain
 from .agent import Session
 from .speech import TTS, to_wav_bytes
 
@@ -112,6 +112,53 @@ async def tts_test(body: dict):
     if body.get("play", True):
         session.speak(text)
     return {"wav_b64": base64.b64encode(to_wav_bytes(samples, sr)).decode(), "seconds": len(samples) / sr}
+
+
+# --------------------------------------------------------------------------- v0.11: train wake word + clap
+_trainer: voicetrain.Trainer | None = None
+
+
+def trainer() -> voicetrain.Trainer:
+    global _trainer
+    if _trainer is None or _trainer.s is not session:
+        _trainer = voicetrain.Trainer(session)
+    return _trainer
+
+
+@app.get("/api/voice/train")
+def train_status():
+    return trainer().status()
+
+
+@app.post("/api/voice/train/record")
+async def train_record(body: dict):
+    """{kind: wake|clap, step: pos|neg}: record one take through the mic and check it."""
+    try:
+        return await asyncio.to_thread(trainer().record, body.get("kind", ""), body.get("step", "pos"),
+                                       body.get("seconds"))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/voice/train/finish")
+async def train_finish(body: dict):
+    try:
+        return await asyncio.to_thread(trainer().finish, body.get("kind", ""))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/voice/train/cancel")
+def train_cancel():
+    trainer().reset()
+    return trainer().status()
+
+
+@app.delete("/api/voice/train/{kind}")
+def train_forget(kind: str):
+    if kind not in ("wake", "clap"):
+        raise HTTPException(400, "kind must be wake or clap")
+    return trainer().forget(kind)
 
 
 # --------------------------------------------------------------------------- v0.7: custom voice, smart home

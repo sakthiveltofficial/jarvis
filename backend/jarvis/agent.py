@@ -390,6 +390,8 @@ class Session:
                 from .wakeword import WakeWord
                 v = self.settings.get("voice", {})
                 self.mic.wake = WakeWord(v.get("wake_word", "hey_jarvis"), float(v.get("wake_threshold", 0.5)))
+                from .voicetrain import load_wake_profile
+                self.mic.wake.set_profile(load_wake_profile(self.mic.wake.name))
                 self.wake_ready = True
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
@@ -420,7 +422,8 @@ class Session:
             sens = float(v.get("clap_sensitivity", 0.5))
             if self.mic.clap is None:
                 from .clap import ClapDetector
-                self.mic.clap = ClapDetector(sens)
+                from .voicetrain import load_clap_profile
+                self.mic.clap = ClapDetector(sens, profile=load_clap_profile())
             else:
                 self.mic.clap.set_sensitivity(sens)
         else:
