@@ -16,7 +16,7 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from . import ar, config, emotion, homeassistant, lang, lifelog, llm, nodes, persona, phones, scheduler, skills, tools
+from . import ar, character, config, emotion, homeassistant, lang, lifelog, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
 from .ambient import Ambient
 from .consolidation import Consolidator
@@ -63,10 +63,10 @@ def sentences(text: str) -> list[str]:
 
 def wake_regex(name: str) -> re.Pattern:
     low = (name or "Jarvis").lower()
-    n = re.escape(low)
-    ta = lang.NAME_TA.get(low)
-    alt = f"|{re.escape(ta)}" if ta else ""
-    return re.compile(rf"^\W*((hey|hi|hello|ok|okay|yo|டேய்|ஹே)\W+)?({n}\b{alt})[\W]*", re.I)
+    names = [low] + (["jarvis"] if low != "jarvis" else [])   # "Hey Jarvis" stays the wake word in every character
+    n = "|".join(re.escape(x) for x in names)
+    alt = "".join(f"|{re.escape(lang.NAME_TA[x])}" for x in names if lang.NAME_TA.get(x))
+    return re.compile(rf"^\W*((hey|hi|hello|ok|okay|yo|டேய்|ஹே)\W+)?((?:{n})\b{alt})[\W]*", re.I)
 
 
 # =========================================================================== agent loop
@@ -436,8 +436,7 @@ class Session:
             and self.settings["agent"].get("speak_replies", True)
         self._on_wake(source="clap", chime=not ack)
         if ack:
-            from .clap import ack_line
-            line = ack_line()
+            line = character.ack(self.settings)
             if self.last_lang in ("ta", "mixed"):
                 line = "சொல்லுங்க?"
             elif self.last_lang == "tanglish":
@@ -594,7 +593,7 @@ class Session:
             self.emit({"type": "error", "text": f"Speech recognition failed: {e}"})
             self.set_state(self._idle_state())
             return
-        wre = wake_regex(self.settings.get("assistant_name"))
+        wre = wake_regex(character.name(self.settings))
         if not ptt and self.voice_mode == "wake" and self.mic.wake is None and not self._recently_engaged():
             # text-based wake fallback (no wake model): only respond when addressed by name
             if not wre.search(text or ""):

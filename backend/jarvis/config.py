@@ -30,6 +30,8 @@ LLM_PRESETS = {
 
 DEFAULTS = {
     "assistant_name": "Jarvis",
+    "character": "jarvis",             # jarvis (friendly, calm, blue orb) | ultron (theatrical villain, red orb)
+    "character_voice": True,           # speak in the character's own voice (Ultron: deeper and colder)
     "user_name": "",
     "llm": {
         "provider": "anthropic",

@@ -162,9 +162,10 @@ const setMode = (m) => send({ type: "voice_mode", mode: m });
 $("btn-handsfree").onclick = () => setMode(MODES[(MODES.indexOf(voiceMode) + 1) % 3]);
 document.querySelectorAll("#voice-seg button").forEach((b) => b.onclick = () => setMode(b.dataset.mode));
 function renderHandsfree() {
-  const name = settings?.assistant_name || "Jarvis";
+  const name = aname();
   const clap = settings?.voice?.clap !== false ? " or clap twice" : "";
-  const label = { off: "push to talk", wake: (wakeReady ? `say “Hey ${name}”` : `say “${name}…”`) + clap, handsfree: "always listening" }[voiceMode];
+  // the wake word model is always "Hey Jarvis"; without it, the name is spotted in what you say
+  const label = { off: "push to talk", wake: (wakeReady ? "say “Hey Jarvis”" : `say “${name}…”`) + clap, handsfree: "always listening" }[voiceMode];
   $("btn-handsfree").classList.toggle("on", voiceMode !== "off");
   $("btn-handsfree").title = `Listening: ${label} (click to change)`;
   $("hf-label").textContent = label;
@@ -269,22 +270,41 @@ $("btn-new").onclick = async () => {
 };
 
 // ------------------------------------------------------------------ presence (soft gradient + wireframe)
+// ------------------------------------------------------------------ character (Jarvis / Ultron, see character.py)
+const CHAR_NAMES = { jarvis: "Jarvis", ultron: "Ultron" };
+const charKey = () => (CHAR_NAMES[settings?.character] ? settings.character : "jarvis");
+// a custom assistant name wins; the stock names follow the character
+function aname() {
+  const n = (settings?.assistant_name || "").trim();
+  return n && !Object.values(CHAR_NAMES).some((x) => x.toLowerCase() === n.toLowerCase()) ? n : CHAR_NAMES[charKey()];
+}
+
 const cv = $("orb"), cx = cv.getContext("2d");
 const blob = document.createElement("canvas"); blob.width = blob.height = 64;
 const bx = blob.getContext("2d");
-const PALETTE = {               // two blob colours per state
-  idle: [[126, 176, 104], [233, 214, 106]], listening: [[200, 236, 80], [240, 205, 90]],
-  transcribing: [[200, 236, 80], [240, 205, 90]], thinking: [[150, 165, 185], [236, 160, 112]],
-  acting: [[236, 150, 100], [242, 196, 82]], speaking: [[120, 186, 96], [214, 243, 74]],
+const GLOW = {                  // simple glow (orb off / no WebGL): two blob colours per state + the focal dot
+  jarvis: {
+    dot: [79, 157, 255],
+    idle: [[61, 139, 255], [127, 212, 255]], listening: [[56, 217, 255], [138, 240, 255]],
+    transcribing: [[56, 217, 255], [138, 240, 255]], thinking: [[107, 107, 255], [169, 139, 255]],
+    acting: [[47, 107, 255], [90, 209, 255]], speaking: [[79, 157, 255], [0, 229, 255]],
+  },
+  ultron: {
+    dot: [255, 42, 42],
+    idle: [[255, 42, 42], [255, 122, 77]], listening: [[255, 59, 59], [255, 154, 107]],
+    transcribing: [[255, 59, 59], [255, 154, 107]], thinking: [[176, 0, 42], [255, 61, 110]],
+    acting: [[209, 10, 26], [255, 140, 26]], speaking: [[255, 26, 26], [255, 77, 46]],
+  },
 };
-let t0 = performance.now(), pal = PALETTE.idle.map((c) => c.slice());
+const glow = () => GLOW[charKey()];
+let t0 = performance.now(), pal = GLOW.jarvis.idle.map((c) => c.slice());
 function ink(a) { return document.documentElement.dataset.theme === "dark" ? `rgba(236,239,236,${a})` : `rgba(23,25,26,${a})`; }
 function draw(now) {
   const t = (now - t0) / 1000;
   level += (targetLevel - level) * 0.18;
   targetLevel *= 0.93;
   if (orb3d) { drawWave(t); requestAnimationFrame(draw); return; }   // the particle orb draws itself
-  const target = PALETTE[state] || PALETTE.idle;
+  const target = glow()[state] || glow().idle;
   pal = pal.map((c, j) => c.map((v, i) => v + (target[j][i] - v) * 0.04));
   const busy = state === "thinking" || state === "acting" || state === "transcribing";
   const W = cv.width, H = cv.height, C = W / 2;
@@ -326,12 +346,12 @@ function draw(now) {
       cx.strokeStyle = ink(0.12); cx.stroke();
     }
   }
-  // 3) lime focal dot with a level halo
+  // 3) focal dot in the character's colour with a level halo
   const halo = 10 + level * 40 + (busy ? 6 * (0.5 + 0.5 * Math.sin(t * 6)) : 0);
-  const g = cx.createRadialGradient(C, C, 0, C, C, halo * 2);
-  g.addColorStop(0, "rgba(214,243,74,0.55)"); g.addColorStop(1, "rgba(214,243,74,0)");
+  const g = cx.createRadialGradient(C, C, 0, C, C, halo * 2), dot = glow().dot.join(",");
+  g.addColorStop(0, `rgba(${dot},0.55)`); g.addColorStop(1, `rgba(${dot},0)`);
   cx.fillStyle = g; cx.beginPath(); cx.arc(C, C, halo * 2, 0, Math.PI * 2); cx.fill();
-  cx.fillStyle = "#d6f34a"; cx.beginPath(); cx.arc(C, C, 6, 0, Math.PI * 2); cx.fill();
+  cx.fillStyle = `rgb(${dot})`; cx.beginPath(); cx.arc(C, C, 6, 0, Math.PI * 2); cx.fill();
   cx.strokeStyle = ink(0.35); cx.lineWidth = 1; cx.beginPath(); cx.arc(C, C, 10, 0, Math.PI * 2); cx.stroke();
   // busy: thin orbit arc
   if (busy) {
@@ -351,7 +371,7 @@ async function applyOrb() {
   const want = ui.orb !== false && !orbFailed && !!window.JarvisOrb;
   if (want && !orb3d && !orbStarting) {
     orbStarting = true;
-    try { orb3d = await window.JarvisOrb.start($("stage"), { quality: ui.orb_quality, theme: curTheme() }); }
+    try { orb3d = await window.JarvisOrb.start($("stage"), { quality: ui.orb_quality, theme: curTheme(), character: charKey() }); }
     catch (e) { console.warn("[orb]", e); orb3d = null; }
     orbStarting = false;
     if (!orb3d) { orbFailed = true; return; }          // no WebGL: keep the glow
@@ -360,7 +380,7 @@ async function applyOrb() {
   } else if (!want && orb3d) {
     orb3d.destroy(); orb3d = null;
   }
-  if (orb3d) orb3d.setQuality(ui.orb_quality || "auto");
+  if (orb3d) { orb3d.setQuality(ui.orb_quality || "auto"); orb3d.setCharacter(charKey()); }
   $("orb").classList.toggle("hidden", !!orb3d);
 }
 function orbEvent(ev) {
@@ -427,7 +447,7 @@ let actionCount = 0, recallCount = 0, msgCount = 0;
 function renderLabels() {
   if (!settings) return;
   greet();
-  $("brand-name").textContent = settings.assistant_name || "Jarvis";
+  $("brand-name").textContent = aname();
   $("model-label").textContent = settings.llm.model || settings.llm.provider;
   const stt = settings.stt.provider === "local_whisper" ? `Whisper ${settings.stt.local_model}` : settings.stt.provider;
   const tts = { piper: "Piper", kokoro: "Kokoro", clone: "custom voice", elevenlabs: "ElevenLabs", fish_audio: "Fish Audio", openai: "OpenAI", none: "silent" }[settings.tts.provider] || settings.tts.provider;
@@ -620,6 +640,8 @@ async function openSettings() {
   opt($("audio-out"), [{ value: "", label: "System default" }, ...d.outputs.map((x) => ({ value: x.id, label: x.name }))], s.audio.output_device ?? "");
 
   $("beh-name").value = s.assistant_name; $("beh-user").value = s.user_name || "";
+  $("beh-character").value = CHAR_NAMES[s.character] ? s.character : "jarvis";
+  $("beh-charvoice").checked = s.character_voice !== false;
   $("beh-confirm").value = s.agent.confirm_mode; $("beh-steps").value = s.agent.max_steps;
   $("beh-silence").value = s.audio.silence_ms; $("beh-speak").checked = s.agent.speak_replies;
   $("beh-headless").checked = s.agent.headless_browser;
@@ -692,6 +714,10 @@ async function openSettings() {
   $("settings").classList.remove("hidden");
 }
 
+$("beh-character").onchange = () => {        // a stock name follows the character; a custom one stays
+  const n = $("beh-name").value.trim().toLowerCase();
+  if (!n || Object.values(CHAR_NAMES).some((x) => x.toLowerCase() === n)) $("beh-name").value = CHAR_NAMES[$("beh-character").value];
+};
 function collect() {
   const prov = $("llm-provider").value;
   const keys = {};
@@ -699,7 +725,9 @@ function collect() {
   if ($("llm-key").value) keys[prov] = $("llm-key").value;
   const dev = (v) => (v === "" ? null : Number(v));
   return {
-    assistant_name: $("beh-name").value || "Jarvis",
+    assistant_name: $("beh-name").value || CHAR_NAMES[$("beh-character").value] || "Jarvis",
+    character: $("beh-character").value,
+    character_voice: $("beh-charvoice").checked,
     user_name: $("beh-user").value,
     llm: {
       provider: prov, kind: presets[prov].kind, base_url: $("llm-base").value.trim(), model: $("llm-model").value.trim(),
@@ -807,7 +835,7 @@ async function loadTrain() {
   } catch (_) {}
 }
 function trainSteps(kind) {
-  const name = settings?.assistant_name || "Jarvis";
+  const name = "Jarvis";   // the wake word model is "Hey Jarvis" in every character
   if (kind === "clap") return Array.from({ length: 4 }, () => ({ step: "pos", say: "👏👏 Clap twice, then stay quiet", secs: 3 }));
   const s = Array.from({ length: 5 }, () => ({ step: "pos", say: `Say “Hey ${name}” once, like you normally would`, secs: 2.5 }));
   s.push({ step: "neg", say: "Now talk normally for a few seconds (anything except my name)", secs: 6 });
@@ -1326,6 +1354,6 @@ function onFileSearch(ev) {
   loadGraph();
   loadAgenda();
   setInterval(renderAgenda, 60000);
-  const name = settings.assistant_name || "Jarvis";
+  const name = aname();
   addMsg("info", `Say “Hey ${name}”, hold Space (or the mic) to talk, or type. Open ⚙ to pick your model, voices and apps.`);
 })();

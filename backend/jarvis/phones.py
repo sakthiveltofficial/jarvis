@@ -29,7 +29,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from . import config, nodes, tools
+from . import character, config, nodes, tools
 
 DEFAULT_PORT = 8767
 PAIR_TTL = 600
@@ -284,7 +284,7 @@ class PhoneHub:
             return None
         welcome = {"name": self.pc_name(), "hosts": self.addresses(), "port": self.port,
                    "user": self.s.settings.get("user_name") or "",
-                   "assistant": self.s.settings.get("assistant_name") or "Jarvis", "state": self.s.state}
+                   "assistant": character.name(self.s.settings), "state": self.s.state}
         if mode == "pair":
             p = self.pairing
             if not p or p["id"] != first.get("pid") or time.time() > p["expires"]:

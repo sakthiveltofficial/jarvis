@@ -21,7 +21,7 @@ import sys
 import threading
 import time
 
-from . import llm
+from . import character, llm
 
 CODING = re.compile(r"visual studio|vs ?code|\bcode\b|cursor|pycharm|intellij|webstorm|android studio|rider|clion|"
                     r"goland|sublime|vim|neovim|emacs|zed|xcode|jupyter|terminal|powershell|cmd\.exe|windows terminal|"
@@ -31,10 +31,18 @@ DO_NOT_DISTURB = re.compile(r"zoom meeting|\bzoom\b|microsoft teams|\bteams\b|go
                             r"slide ?show|powerpoint slide show", re.I)
 WATCHING = re.compile(r"youtube|netflix|prime video|hotstar|vlc|media player|twitch|spotify", re.I)
 
-PHRASE_SYSTEM = """You are {name}, {user}'s warm, witty personal assistant (dry British humour). You are about to
-speak up on your own, unprompted. Say the idea below as ONE short, natural spoken line (under 22 words): kind,
-light, never preachy, no lists, no emoji. If {user} usually talks in Tamil or Tanglish (see the hint), say it the
+PHRASE_SYSTEM = """You are {name}, {who}. You are about to
+speak up on your own, unprompted. Say the idea below as ONE short, natural spoken line (under 22 words): {style},
+no lists, no emoji. If {user} usually talks in Tamil or Tanglish (see the hint), say it the
 same way. Reply with only the line."""
+
+
+def phrase_system(settings: dict) -> str:
+    """PHRASE_SYSTEM in the current character's voice (character.py)."""
+    user = settings.get("user_name") or "the user"
+    ch = character.get(settings)
+    return PHRASE_SYSTEM.format(name=character.name(settings), user=user, who=character.fmt(ch["line"], user),
+                                style=ch["line_style"])
 
 
 def idle_seconds() -> float:
@@ -184,7 +192,6 @@ class Ambient:
 
     def phrase(self, kind: str, idea: str) -> str:
         st = self.s.settings
-        user = st.get("user_name") or "the user"
         from .lang import LABELS
         lang = LABELS.get(getattr(self.s, "last_lang", ""), "")
         extra = ""
@@ -196,14 +203,14 @@ class Ambient:
             except Exception:  # noqa: BLE001
                 pass
         try:
-            line = llm.complete(st, PHRASE_SYSTEM.format(name=st.get("assistant_name") or "Jarvis", user=user),
+            line = llm.complete(st, phrase_system(st),
                                 f"Idea: {idea}{extra}\nLanguage hint: {lang or 'English'}", max_tokens=80,
                                 model=(st.get("ambient") or {}).get("model") or None).strip().strip('"')
             if line and len(line) < 300:
                 return line
         except Exception as e:  # noqa: BLE001
             print(f"[jarvis] ambient phrasing failed: {e}")
-        return FALLBACK.get(kind, "Just checking in.").format(user=st.get("user_name") or "")
+        return character.fallback(st, kind, FALLBACK.get(kind, "Just checking in.")).format(user=st.get("user_name") or "")
 
     def say(self, kind: str, idea: str):
         wb = getattr(self.s, "wellbeing", None)

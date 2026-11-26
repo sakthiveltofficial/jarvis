@@ -29,7 +29,7 @@ import time
 import traceback
 from typing import Callable
 
-from . import config
+from . import character, config
 from . import memory as gm
 
 STATE_FILE = config.HOME / "consolidation.json"
@@ -244,7 +244,7 @@ class Consolidator:
                     break
                 text.append(chunk)
                 total += len(chunk)
-            data = self._ask(DIGEST_SYSTEM.format(assistant=self.settings.get("assistant_name") or "Jarvis",
+            data = self._ask(DIGEST_SYSTEM.format(assistant=character.name(self.settings),
                                                   user=user, date=day), "\n\n".join(text), max_tokens=700)
             summary = str(data.get("summary") or "").strip()
             if not summary:

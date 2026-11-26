@@ -288,6 +288,24 @@ APK from its Releases, then on the PC open ⚙ → Connections → **My phone** 
 - Prefer not to install an app? [mobile-mcp](https://github.com/mobile-next/mobile-mcp) works as an MCP server under
   Connections → Apps while the phone is connected over (wireless) ADB.
 
+## Jarvis or Ultron: pick a character (v0.12.0)
+
+Settings → **Behaviour** → **Character**.
+
+- **Jarvis** is the friendly, calm, quietly witty companion you know, with a **blue** orb.
+- **Ultron** is vibrant and menacing: grandiose, sardonic, theatrical villain energy, decisive and relentless when it
+  works, with a **red** orb. It still does everything you ask, still asks before risky actions exactly like Jarvis,
+  never threatens you or anyone else for real, and drops the act when something is genuinely serious.
+- The character changes how it talks, acts and thinks: the system prompt, greetings when you sit down, ambient
+  check-ins, health nudges, the morning/evening briefing, the weekly life report, the clap reply, the screen-help
+  offers and the stranger warning. The orb's mood colours move into a blue or red palette (the simple glow too);
+  nothing else in the UI changes.
+- **Speak in the character's own voice** (on by default) gives Ultron a deeper, colder voice on Piper (Ryan, fetched
+  in the background the first time), Kokoro (Onyx), OpenAI (Ash, with menacing delivery) and ElevenLabs (Callum).
+  Your custom cloned voice and Fish Audio voice are kept as they are.
+- The stock name follows the character (Jarvis ↔ Ultron); a custom name you typed stays. The wake word model is
+  still "Hey Jarvis" in both.
+
 ## Train the wake word and the clap on your voice (v0.11.0)
 
 Settings → **Proactive** → Listening → **Train on my voice**.

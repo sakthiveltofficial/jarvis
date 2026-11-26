@@ -6,31 +6,53 @@
 //   audio  -> Jarvis's voice pushes particles outward in waves; the user's voice draws them in
 //
 // Classic script (no top-level import) so `node --check` in CI can parse it; Three.js is loaded on demand.
-// Public API: window.JarvisOrb.start(container, {quality, theme}) -> Promise<controller | null>.
+// Public API: window.JarvisOrb.start(container, {quality, theme, character}) -> Promise<controller | null>.
 (() => {
   "use strict";
 
   // ------------------------------------------------------------------ palettes
+  // One palette per character (Settings > Behaviour > Character): Jarvis lives in blues, Ultron in reds.
   // [colour A, colour B, sparkle, speed, turbulence, sparkle amount]
-  const MOODS = {
-    neutral:    ["#8fd16a", "#e9d66a", "#ffffff", 0.8, 0.6, 0.06],
-    listening:  ["#c8f04a", "#7fd6a0", "#ffffff", 1.0, 0.7, 0.08],
-    thinking:   ["#9b6bff", "#e07bff", "#ffffff", 1.35, 0.9, 0.12],
-    // Jarvis's mood (from the <mood> tag on each reply)
-    calm:       ["#4f9dff", "#9ad7ff", "#ffffff", 0.6, 0.5, 0.05],
-    happy:      ["#ffb347", "#ffe08a", "#fff6d8", 1.0, 0.8, 0.12],
-    excited:    ["#ffc53d", "#ff7a3d", "#fff2b0", 1.6, 1.2, 0.28],
-    curious:    ["#3ee6c1", "#b4ff8a", "#ffffff", 1.05, 0.85, 0.12],
-    focused:    ["#6f8cff", "#b8c4ff", "#ffffff", 0.8, 0.4, 0.06],
-    concerned:  ["#2ec4b6", "#9be7e0", "#ffffff", 0.55, 0.45, 0.04],
-    apologetic: ["#b9a3ff", "#ffc2e0", "#ffffff", 0.5, 0.45, 0.04],
-    playful:    ["#ff6fd8", "#ffd36f", "#ffffff", 1.4, 1.0, 0.22],
-    // how the user sounds (from the emotion detector)
-    u_stressed: ["#3cc9b5", "#a6f0e4", "#ffffff", 0.4, 0.3, 0.03],
-    u_excited:  ["#ffc53d", "#ff8f4d", "#fff2b0", 1.4, 1.1, 0.24],
-    u_down:     ["#ff9fb2", "#ffd6a5", "#ffffff", 0.5, 0.45, 0.05],
-    u_tired:    ["#8ea6ff", "#c7b8ff", "#ffffff", 0.45, 0.4, 0.04],
+  const PALETTES = {
+    jarvis: {
+      neutral:    ["#3d8bff", "#7fd4ff", "#ffffff", 0.8, 0.6, 0.06],
+      listening:  ["#38d9ff", "#8af0ff", "#ffffff", 1.0, 0.7, 0.08],
+      thinking:   ["#6b6bff", "#a98bff", "#ffffff", 1.35, 0.9, 0.12],
+      // the companion's mood (from the <mood> tag on each reply)
+      calm:       ["#4f9dff", "#9ad7ff", "#ffffff", 0.6, 0.5, 0.05],
+      happy:      ["#4fc3ff", "#bfe9ff", "#fff6d8", 1.0, 0.8, 0.12],
+      excited:    ["#00e5ff", "#5d8bff", "#e8fbff", 1.6, 1.2, 0.28],
+      curious:    ["#3ee6c1", "#7fd4ff", "#ffffff", 1.05, 0.85, 0.12],
+      focused:    ["#2f6bff", "#9fb4ff", "#ffffff", 0.8, 0.4, 0.06],
+      concerned:  ["#2ec4b6", "#9be7e0", "#ffffff", 0.55, 0.45, 0.04],
+      apologetic: ["#8f9dff", "#c8d2ff", "#ffffff", 0.5, 0.45, 0.04],
+      playful:    ["#5ad1ff", "#b38bff", "#ffffff", 1.4, 1.0, 0.22],
+      // how the user sounds (from the emotion detector)
+      u_stressed: ["#3cc9b5", "#a6f0e4", "#ffffff", 0.4, 0.3, 0.03],
+      u_excited:  ["#22d3ff", "#6aa8ff", "#e8fbff", 1.4, 1.1, 0.24],
+      u_down:     ["#7aa2ff", "#c7d6ff", "#ffffff", 0.5, 0.45, 0.05],
+      u_tired:    ["#8ea6ff", "#c7b8ff", "#ffffff", 0.45, 0.4, 0.04],
+    },
+    ultron: {        // hotter and a little more restless than Jarvis at every mood
+      neutral:    ["#ff2a2a", "#ff7a4d", "#ffd0c0", 0.85, 0.7, 0.08],
+      listening:  ["#ff3b3b", "#ff9a6b", "#ffe0d0", 1.05, 0.8, 0.1],
+      thinking:   ["#b0002a", "#ff3d6e", "#ffd0d8", 1.45, 1.0, 0.14],
+      calm:       ["#c4161c", "#ff5a4a", "#ffd0c0", 0.6, 0.5, 0.05],
+      happy:      ["#ff4d2e", "#ffa040", "#fff0d0", 1.0, 0.85, 0.14],
+      excited:    ["#ff1a1a", "#ff8c1a", "#fff2b0", 1.7, 1.3, 0.32],
+      curious:    ["#ff3d6e", "#ff9a8a", "#ffffff", 1.05, 0.85, 0.12],
+      focused:    ["#d10a1a", "#ff4040", "#ffd0c0", 0.8, 0.45, 0.06],
+      concerned:  ["#a8102a", "#ff6070", "#ffd8dc", 0.55, 0.45, 0.04],
+      apologetic: ["#9a1838", "#ff7a9a", "#ffe0e8", 0.5, 0.45, 0.04],
+      playful:    ["#ff2a6a", "#ff8a3d", "#ffffff", 1.4, 1.1, 0.24],
+      u_stressed: ["#b31b2e", "#ff8080", "#ffe0e0", 0.4, 0.3, 0.03],
+      u_excited:  ["#ff2a1a", "#ff9a3d", "#fff2b0", 1.5, 1.2, 0.26],
+      u_down:     ["#8a1030", "#ff6a80", "#ffe0e8", 0.5, 0.45, 0.05],
+      u_tired:    ["#7a1a2a", "#c84a5a", "#ffd8dc", 0.45, 0.4, 0.04],
+    },
   };
+  const palette = (c) => PALETTES[c] || PALETTES.jarvis;
+  const MOODS = PALETTES.jarvis;   // mood names are the same in every palette
 
   // tool name -> icon shape shown while Jarvis works
   function taskShape(tool) {
@@ -228,6 +250,7 @@
     // live state
     const S = {
       state: "idle", shape: "sphere", quality: opts.quality || "auto", lowPower: false, theme: opts.theme || "light",
+      pal: palette(opts.character),
       tts: 0, ttsTarget: 0, mic: 0, micTarget: 0,
       aiMood: null, aiAt: 0, userMood: null, userAt: 0,
       task: null, taskUntil: 0, flash: 0, morphStart: 0, morphDur: 1.4, spin: 0,
@@ -321,7 +344,7 @@
       if (S.state === "listening" || S.state === "transcribing") key = "listening";
       if (S.userMood && S.userMood !== "neutral" && now - S.userAt < 300) key = "u_" + S.userMood;
       if (S.aiMood && (now - S.aiAt < 25 || S.state === "speaking")) key = S.aiMood;
-      let look = MOODS[key] || MOODS.neutral;
+      let look = S.pal[key] || S.pal.neutral;
       const busy = S.state === "thinking" || S.state === "acting";
       return { look, busy };
     }
@@ -331,7 +354,7 @@
       tmpA.set(look[0]); tmpB.set(look[1]); tmpC.set(look[2]);
       let speed = look[3], turb = look[4], spark = look[5], swirl = 0;
       if (busy) {      // thinking pulls the colours toward violet and starts the swirl
-        violetA.set(MOODS.thinking[0]); violetB.set(MOODS.thinking[1]);
+        violetA.set(S.pal.thinking[0]); violetB.set(S.pal.thinking[1]);
         tmpA.lerp(violetA, 0.65); tmpB.lerp(violetB, 0.65);
         speed = Math.max(speed, 1.2); turb = Math.max(turb, 0.8); spark = Math.max(spark, 0.1);
         swirl = S.state === "thinking" ? 0.9 : 0;
@@ -455,6 +478,7 @@
         else if (g === "swipe_down") S.velX += 4;
         else if (g === "pinch_tap") S.bloom = 0.5;
       },
+      setCharacter(c) { S.pal = palette(c); },     // colours glide over to the new palette
       setTheme(t) { S.theme = t === "dark" ? "dark" : "light"; applyTheme(); },
       setQuality(q) { S.quality = q || "auto"; applyQuality(); },
       get info() { return { shape: S.shape, state: S.state, particles: count, lowPower: S.lowPower, mood: targetLook() }; },
@@ -465,5 +489,5 @@
     };
   }
 
-  window.JarvisOrb = { start, taskShape, moods: Object.keys(MOODS) };
+  window.JarvisOrb = { start, taskShape, moods: Object.keys(MOODS), palettes: PALETTES };
 })();
