@@ -16,7 +16,7 @@ from typing import Awaitable, Callable
 
 import numpy as np
 
-from . import ar, config, emotion, homeassistant, lang, lifelog, llm, nodes, persona, phones, scheduler, skills, tools
+from . import ar, character, config, selfctl, emotion, homeassistant, lang, lifelog, llm, nodes, persona, phones, scheduler, skills, tools
 from . import memory as gm
 from .ambient import Ambient
 from .consolidation import Consolidator
@@ -61,12 +61,16 @@ def sentences(text: str) -> list[str]:
     return out
 
 
-def wake_regex(name: str) -> re.Pattern:
+def wake_regex(name: str, phrase: str = "") -> re.Pattern:
     low = (name or "Jarvis").lower()
-    n = re.escape(low)
-    ta = lang.NAME_TA.get(low)
-    alt = f"|{re.escape(ta)}" if ta else ""
-    return re.compile(rf"^\W*((hey|hi|hello|ok|okay|yo|டேய்|ஹே)\W+)?({n}\b{alt})[\W]*", re.I)
+    names = [low] + (["jarvis"] if low != "jarvis" else [])   # "Hey Jarvis" stays the wake word in every character
+    n = "|".join(re.escape(x) for x in names)
+    alt = "".join(f"|{re.escape(lang.NAME_TA[x])}" for x in names if lang.NAME_TA.get(x))
+    if phrase:                                   # your own wake phrase, said as a whole ("ok computer", "wake up daddy")
+        words = [re.escape(w) for w in re.findall(r"\w+", phrase.lower())]
+        if words:
+            alt += "|" + r"\W+".join(words) + r"\b"
+    return re.compile(rf"^\W*((hey|hi|hello|ok|okay|yo|டேய்|ஹே)\W+)?((?:{n})\b{alt})[\W]*", re.I)
 
 
 # =========================================================================== agent loop
@@ -111,7 +115,7 @@ class Runner:
         if not self.background and (st.get("phones") or {}).get("devices"):
             out = out + [ar.SPEC]
         if not self.background:
-            out = out + [lifelog.SPEC]
+            out = out + [lifelog.SPEC, selfctl.SPEC]
         return out + self.s.mcp.specs()
 
     async def call_tool(self, call: llm.ToolCall) -> tools.ToolOutput:
@@ -137,6 +141,8 @@ class Runner:
         mode = self.s.settings["agent"].get("confirm_mode", "risky")
         if self.s.mcp.is_mcp(call.name):
             return self.s.mcp.risk(call.name, mode)
+        if call.name == "self":
+            return selfctl.risk(call.args or {}, self.s.settings)
         if call.name == "smart_home":
             if mode == "never":
                 return None
@@ -298,6 +304,10 @@ class Session:
         self.camera = CameraHub(self.settings)
         self.wellbeing = Wellbeing(self, self.camera)
         self.meta_tools["life"] = self.wellbeing.tool
+        # v0.12: the companion controls its own app (selfctl.py); live spectrum while training the wake word / clap
+        self.selfctl = selfctl.SelfControl(self)
+        self.meta_tools["self"] = self.selfctl.tool
+        self.mic.on_spectrum = lambda bands: self.emit({"type": "spectrum", "bands": bands})
         self._sync_gestures()
         STT.preload(self.settings)
         mode = self.settings.get("voice", {}).get("mode", "off")
@@ -348,6 +358,7 @@ class Session:
         if isinstance(ha, dict) and str(ha.get("token", "")).startswith("••••"):
             ha["token"] = (self.settings.get("home_assistant") or {}).get("token", "")
         old_llm = dict(self.settings["llm"])
+        old_wake = selfctl.wake_profile_name(self.settings)
         merged = config.save(new)
         for k in ("mcp", "nodes"):           # lists replace rather than merge
             if k in new:
@@ -370,6 +381,10 @@ class Session:
         self._sync_node_server()
         self._sync_clap()
         self._sync_gestures()
+        if selfctl.wake_profile_name(self.settings) != old_wake:      # new wake phrase: new detector
+            self.mic.wake = None
+            if self.voice_mode == "wake":
+                threading.Thread(target=self.set_voice_mode, args=("wake", False), daemon=True).start()
         threading.Thread(target=self.wellbeing.sync, name="presence-sync", daemon=True).start()
         self.camera.sync()
         self.home._at = self.home._sum_at = 0.0
@@ -387,16 +402,24 @@ class Session:
         if mode == "wake" and self.mic.wake is None:
             self.emit({"type": "info", "text": "Loading the wake word model…"})
             try:
+                from .voicetrain import load_wake_profile
                 from .wakeword import WakeWord
                 v = self.settings.get("voice", {})
-                self.mic.wake = WakeWord(v.get("wake_word", "hey_jarvis"), float(v.get("wake_threshold", 0.5)))
-                from .voicetrain import load_wake_profile
-                self.mic.wake.set_profile(load_wake_profile(self.mic.wake.name))
+                custom = selfctl.custom_wake(self.settings)
+                profile = load_wake_profile(selfctl.wake_profile_name(self.settings))
+                if custom and profile is None:
+                    raise RuntimeError(f"your wake phrase \"{selfctl.wake_phrase(self.settings)}\" isn't trained yet "
+                                       "(Settings → Proactive → Train wake word)")
+                ww = WakeWord(v.get("wake_word", "hey_jarvis"), float(v.get("wake_threshold", 0.5)))
+                ww.custom = custom
+                ww.set_profile(profile)
+                self.mic.wake = ww
                 self.wake_ready = True
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
                 self.wake_ready = False
-                self.emit({"type": "info", "text": f"Wake word model unavailable ({e}); I'll listen for my name instead."})
+                self.emit({"type": "info", "text": f"Wake word detector unavailable ({e}); I'll listen for "
+                                                  f"“{selfctl.wake_phrase(self.settings)}” or my name in what I hear instead."})
         self.voice_mode = mode
         self._sync_clap()
         try:
@@ -436,8 +459,7 @@ class Session:
             and self.settings["agent"].get("speak_replies", True)
         self._on_wake(source="clap", chime=not ack)
         if ack:
-            from .clap import ack_line
-            line = ack_line()
+            line = character.ack(self.settings)
             if self.last_lang in ("ta", "mixed"):
                 line = "சொல்லுங்க?"
             elif self.last_lang == "tanglish":
@@ -454,7 +476,8 @@ class Session:
                 if g.get("enabled"):
                     if self.gestures is None:
                         from .gestures import GestureControl
-                        self.gestures = GestureControl(self.settings, self._on_gesture, self._on_hand, self.camera)
+                        self.gestures = GestureControl(self.settings, self._on_gesture, self._on_hand, self.camera,
+                                                   on_mirror=lambda ev: self.emit({"type": "mirror", **ev}))
                     self.gestures.start()
                 elif self.gestures is not None and self.gestures.running:
                     self.gestures.stop()
@@ -594,7 +617,8 @@ class Session:
             self.emit({"type": "error", "text": f"Speech recognition failed: {e}"})
             self.set_state(self._idle_state())
             return
-        wre = wake_regex(self.settings.get("assistant_name"))
+        wre = wake_regex(character.name(self.settings),
+                         selfctl.wake_phrase(self.settings) if selfctl.custom_wake(self.settings) else "")
         if not ptt and self.voice_mode == "wake" and self.mic.wake is None and not self._recently_engaged():
             # text-based wake fallback (no wake model): only respond when addressed by name
             if not wre.search(text or ""):
@@ -621,7 +645,10 @@ class Session:
         return time.time() < getattr(self, "_engaged_text_until", 0)
 
     # ------------------------------------------------------------------ voice output
-    def speak(self, text: str):
+    def speak(self, text: str, who: str | None = None):
+        """Queue text to be spoken. who: the character speaking (default: the current one), so a line queued
+        just before a Jarvis <-> Ultron switch, or by the other character in a conversation, keeps its own voice."""
+        who = who or character.key(self.settings)
         if not self.settings["agent"].get("speak_replies", True) or self.settings["tts"].get("provider") == "none":
             return
         if self.reply_to == "-":
@@ -630,26 +657,26 @@ class Session:
             device = self.reply_to
             gen = self._speech_gen
             for s in sentences(speakable(text)):
-                self.phones.pool.submit(self._speak_on_phone, device, s, gen)
+                self.phones.pool.submit(self._speak_on_phone, device, s, gen, who)
             return
         style = None
         if self.mood.get("mood", "neutral") != "neutral" and time.time() - self.mood.get("at", 0) < 300 \
                 and self.settings.get("voice", {}).get("emotion", True):
             style = emotion.STYLES.get(self.mood["mood"])
         for s in sentences(speakable(text)):
-            self._speech_q.put((self._speech_gen, s, style))
+            self._speech_q.put((self._speech_gen, s, style, who))
 
     def stop_speaking(self):
         self._speech_gen += 1
         self.player.stop()
         self.phones.stop_audio()
 
-    def _speak_on_phone(self, device: str, text: str, gen: int):
+    def _speak_on_phone(self, device: str, text: str, gen: int, who: str | None = None):
         if gen != self._speech_gen:
             return
         try:
             from .speech import to_wav_bytes
-            audio, sr = TTS(self.settings).synthesize(text)
+            audio, sr = TTS(character.as_character(self.settings, who)).synthesize(text)
             if gen == self._speech_gen:
                 self.phones.send_audio(device, to_wav_bytes(audio, sr), text)
         except Exception as e:  # noqa: BLE001
@@ -711,20 +738,21 @@ class Session:
 
     def _synth_worker(self):
         while True:
-            gen, text, style = self._speech_q.get()
+            gen, text, style, who = self._speech_q.get()
             if gen != self._speech_gen:
                 continue
             try:
-                audio, sr = TTS(self.settings).synthesize(text, style)
-                self._audio_q.put((gen, audio, sr, text))
+                audio, sr = TTS(character.as_character(self.settings, who)).synthesize(text, style)
+                self._audio_q.put((gen, audio, sr, text, who))
             except Exception as e:  # noqa: BLE001
                 self.emit({"type": "error", "text": f"Text-to-speech failed: {e}"})
 
     def _play_worker(self):
         while True:
-            gen, audio, sr, text = self._audio_q.get()
+            gen, audio, sr, text, who = self._audio_q.get()
             if gen != self._speech_gen:
                 continue
+            self.emit({"type": "speaker", "character": who})     # the orb takes the speaker's colours
             self.mic.speaking = True
             self._now_speaking = text
             prev = self.state

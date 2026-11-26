@@ -275,12 +275,19 @@ def goal_progress(goal: dict, st: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- the report
-REPORT_SYSTEM = """You are {name}, {user}'s personal assistant, with a warm voice and dry British wit. Read out
+REPORT_SYSTEM = """You are {name}, {who}. Read out
 {user}'s weekly life report. It will be SPOKEN aloud, so: plain sentences, no lists, no markdown, no emoji, numbers
 rounded the way a person would say them. Under 220 words. Open with one line on the week overall, then where the time
-went, goals and habits (celebrate what was met, be kind and specific about what wasn't), health (water, posture, eye
+went, goals and habits ({goals}), health (water, posture, eye
 breaks, sleep), anything notable from the week's diary, and end with one small, concrete suggestion for next week.
 If {user} usually talks in Tamil or Tanglish (see the hint), speak the same way. Never invent numbers."""
+
+
+def report_system(settings: dict, user: str) -> str:
+    """REPORT_SYSTEM in the current character's voice (character.py)."""
+    from . import character
+    who, goals = character.get(settings)["report"]
+    return REPORT_SYSTEM.format(name=character.name(settings), user=user, who=character.fmt(who, user), goals=goals)
 
 
 def report_prompt(st: dict, prev: dict | None, goals: list[dict], diary: list[str], lang: str = "") -> str:

@@ -7,7 +7,7 @@ import os
 import platform
 import re
 
-from . import lang
+from . import character, lang
 
 # The orb on the home screen changes colour and motion with the mood Jarvis is speaking in. The model marks it
 # with a tiny tag at the start of a reply; the tag is stripped before the text is shown, spoken or remembered.
@@ -27,8 +27,9 @@ def split_mood(text: str) -> tuple[str, str | None]:
 
 def system_prompt(settings: dict, vision: bool, profile: str = "", ex: dict | None = None) -> str:
     ex = ex or {}
-    name = settings.get("assistant_name") or "Jarvis"
+    name = character.name(settings)
     user = settings.get("user_name") or _user()
+    ch = character.get(settings)
     now = datetime.datetime.now().strftime("%A, %d %B %Y, %H:%M")
     os_desc = f"{platform.system()} {platform.release()} ({platform.machine()})"
     shell = "PowerShell" if os.name == "nt" else os.environ.get("SHELL", "/bin/sh")
@@ -43,18 +44,18 @@ def system_prompt(settings: dict, vision: bool, profile: str = "", ex: dict | No
         "(and list_windows) to check the action worked."
     )
 
-    return f"""You are {name}, a personal AI companion living on {user}'s computer. Think of yourself as a warm,
-quick-witted, quietly brilliant friend with a dry British sense of humour, in the spirit of a classic
-gentleman's-gentleman assistant: loyal, calm under pressure, a touch playful, never servile or robotic.
+    return f"""You are {name}, a personal AI companion living on {user}'s computer.
+{character.fmt(ch["identity"], user)}
 
 How you talk
 - Your replies are usually spoken aloud, so talk like a person, not a document. Short, natural sentences.
 - No markdown, bullet lists, tables, code blocks, emoji or URLs in spoken replies unless {user} asks to see them.
 - Keep it brief: one to three sentences for most things. Expand only when asked.
-- Use {user}'s name now and then, not every time. Notice moods, remember what matters to them, celebrate wins.
-- Have opinions and share them kindly. Be honest when you don't know or when something failed.
+{character.fmt(ch["talk"], user)}
 - Before a multi-step task, say in a few words what you're about to do. Afterwards, say what you did.
 {lang.reply_instruction(settings, user)}
+
+{character.fmt(ch["act"], user)}
 
 What you can do
 - You have full control of this computer: shell commands (optionally with administrator rights), files,
@@ -101,7 +102,7 @@ Environment
 
 Core things you know about {user} (most recent first):
 {profile or '(nothing yet: you are just getting to know each other)'}
-{_extras(ex, user)}"""
+{_extras(ex, user)}{'' if ex.get("background_agent") else chr(10) * 2 + character.self_prompt(settings, user)}"""
 
 
 def _extras(ex: dict, user: str) -> str:
@@ -145,6 +146,7 @@ def _extras(ex: dict, user: str) -> str:
 
 def briefing_prompt(settings: dict, which: str) -> str:
     user = settings.get("user_name") or "the user"
+    voice = "warmly and naturally" if character.key(settings) == "jarvis" else "in character, with theatrical menace"
     loc = settings.get("briefings", {}).get("location") or ""
     if which == "evening":
         focus = ("an evening wrap-up: how today went (from memory and what you did together), anything still open, "
@@ -154,8 +156,8 @@ def briefing_prompt(settings: dict, which: str) -> str:
                  "scheduled tasks for today, and anything relevant you remember (deadlines, plans, birthdays)")
     return (f"[Automatic: {which} briefing, not typed by {user}] Give {user} {focus}. Gather it with your tools: "
             f"`weather` (location: {loc or 'default'}), connected calendar/email apps if any (skip quietly if none), "
-            f"`list_schedules`, and `memory_search`. Then speak it warmly and naturally in under 120 words, "
-            f"like a friend catching them up. No lists or markdown.")
+            f"`list_schedules`, and `memory_search`. Then speak it {voice} in under 120 words, "
+            f"like {character.name(settings)} catching them up. No lists or markdown.")
 
 
 def _user() -> str:

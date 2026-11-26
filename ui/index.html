@@ -294,6 +294,16 @@
     </div>
 
     <div class="tab hidden" id="tab-behaviour">
+      <h3>Character</h3>
+      <label>Who am I?
+        <select id="beh-character">
+          <option value="jarvis">Jarvis: friendly, calm and helpful (blue orb)</option>
+          <option value="ultron">Ultron: vibrant, menacing, villain-style (red orb)</option>
+        </select>
+      </label>
+      <p class="hint">Changes how I talk, act and think: my tone, greetings, check-ins, health nudges and weekly report.
+        Ultron still does everything you ask and asks before risky actions, just with more menace.</p>
+      <label class="check"><input type="checkbox" id="beh-charvoice" /> Speak in the character's own voice (Ultron sounds deeper and colder)</label>
       <div class="row2">
         <label>Assistant name <input id="beh-name" /></label>
         <label>What should I call you? <input id="beh-user" /></label>
@@ -373,7 +383,7 @@
       <h3>Listening</h3>
       <div class="row2">
         <label>Voice mode
-          <select id="pv-mode"><option value="wake">Wake word (“Hey Jarvis”)</option><option value="handsfree">Always listening</option><option value="off">Push to talk only</option></select></label>
+          <select id="pv-mode"><option value="wake">Wake word</option><option value="handsfree">Always listening</option><option value="off">Push to talk only</option></select></label>
         <label>Wake word sensitivity <small>(lower = more sensitive)</small>
           <input id="pv-thr" type="number" step="0.05" min="0.2" max="0.95" /></label>
       </div>
@@ -381,6 +391,8 @@
         <label>Keep listening after I reply (seconds) <input id="pv-follow" type="number" min="0" max="120" /></label>
         <label>Wait for you after the wake word (seconds) <input id="pv-listen" type="number" min="2" max="30" /></label>
       </div>
+      <label>Wake phrase <small>(your own words, like “Wake up Ultron”; empty = the built-in “Hey Jarvis”. Train it below to use it)</small>
+        <input id="pv-phrase" placeholder="Hey Jarvis" maxlength="60" /></label>
       <label class="check"><input type="checkbox" id="pv-chime" /> Play a soft chime when I hear the wake word</label>
       <div class="row3">
         <label class="check"><input type="checkbox" id="pv-clap" /> Clap twice to wake me</label>
@@ -401,6 +413,10 @@
         <div class="train-run hidden" id="train-run">
           <div class="train-say" id="train-say"></div>
           <div class="train-dots" id="train-dots"></div>
+          <div class="train-spec">
+            <canvas id="train-spectro" width="600" height="120" title="Live spectrogram: time left to right, low pitch at the bottom"></canvas>
+            <canvas id="train-bars" width="160" height="120" title="Live spectrum"></canvas>
+          </div>
           <p class="hint" id="train-msg"></p>
           <div class="row-btns">
             <button class="pill primary" id="train-go" type="button">● Record</button>
@@ -487,6 +503,7 @@
       <label class="check"><input type="checkbox" id="gs-fist" /> ✊ Fist (hold): stop what I'm doing</label>
       <label class="check"><input type="checkbox" id="gs-windows" /> ⟷ Swipe left or right: switch windows · swipe up: maximise · swipe down: minimise</label>
       <label class="check"><input type="checkbox" id="gs-orb" /> 🤏 Pinch and move: spin the orb · quick pinch: show or hide my window</label>
+      <label class="check"><input type="checkbox" id="gs-mirror" /> 🫶 Mirror me: hold up a heart (two hands), thumbs up, peace, rock, OK or point and the orb copies it</label>
       <p id="gs-status" class="hint"></p>
     </div>
 

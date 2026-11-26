@@ -5,6 +5,8 @@
     pinch + move       spin the orb; a quick pinch shows or hides the Jarvis window
     swipe left/right   switch windows
     swipe up/down      maximise / minimise the active window
+    mirror (v0.12)     hold up a heart (two hands), thumbs up/down, peace, rock, love, call me, OK or point, and the
+                       orb's particles take the same shape, like a friend copying your gesture back
 
 Frames come from the shared webcam stream (camera.py) at ~15 fps (slower while no hand is in view), the same stream
 Presence uses. Frames never leave the computer and nothing is recorded: each frame becomes 21 hand points and is dropped.
@@ -198,6 +200,95 @@ def ensure_model() -> Path:
     return MODEL_PATH
 
 
+# --------------------------------------------------------------------------- mirror: the orb copies your gesture (v0.12)
+MIRROR_POSES = ("heart", "thumbs_up", "thumbs_down", "peace", "rock", "love", "call", "ok", "point")
+
+
+def _fingers(lm) -> tuple[list[bool], list[bool], float]:
+    scale = max(_d(lm[WRIST], lm[MIDDLE_MCP]), 1e-4)
+    tip = [_d(lm[WRIST], lm[t]) / scale for _, t in FINGERS]
+    pip = [_d(lm[WRIST], lm[p]) / scale for p, _ in FINGERS]
+    ext = [tip[i] > pip[i] * 1.12 for i in range(4)]
+    curled = [tip[i] < pip[i] * 1.05 for i in range(4)]
+    return ext, curled, scale
+
+
+def _thumb_out(lm, scale: float) -> bool:
+    return _d(lm[THUMB_TIP], lm[INDEX_MCP]) > scale * 0.55 and \
+        _d(lm[THUMB_TIP], lm[PINKY_MCP]) > _d(lm[THUMB_IP], lm[PINKY_MCP]) * 1.05
+
+
+def mirror_pose(lm) -> str | None:
+    """One hand's landmarks (image space, mirrored, y down) -> a gesture the orb can mirror, or None."""
+    ext, curled, scale = _fingers(lm)
+    thumb = _thumb_out(lm, scale)
+    i, m, rg, pk = ext
+    if all(curled) and thumb:
+        dy = (lm[THUMB_TIP][1] - lm[WRIST][1]) / scale
+        if dy < -0.6 and lm[THUMB_TIP][1] < lm[INDEX_MCP][1]:
+            return "thumbs_up"
+        if dy > 0.3 and lm[THUMB_TIP][1] > lm[INDEX_MCP][1]:
+            return "thumbs_down"
+        return None
+    if m and rg and pk and _d(lm[THUMB_TIP], lm[INDEX_TIP]) / scale < 0.35:
+        return "ok"
+    if i and m and not rg and not pk and curled[2] and curled[3]:
+        return "peace"
+    if i and pk and not m and not rg:
+        return "love" if thumb else "rock"
+    if pk and thumb and not i and not m and not rg and curled[0] and curled[1]:
+        return "call"
+    if i and not m and not rg and not pk and curled[1] and curled[2] and curled[3] and not thumb:
+        return "point"
+    return None
+
+
+def heart_pose(a, b) -> bool:
+    """Two hands making a heart: index tips touching at the top, thumb tips touching at the bottom."""
+    sa = max(_d(a[WRIST], a[MIDDLE_MCP]), 1e-4)
+    sb = max(_d(b[WRIST], b[MIDDLE_MCP]), 1e-4)
+    s = (sa + sb) / 2
+    idx = _d(a[INDEX_TIP], b[INDEX_TIP]) / s
+    thb = _d(a[THUMB_TIP], b[THUMB_TIP]) / s
+    top = (a[INDEX_TIP][1] + b[INDEX_TIP][1]) / 2
+    bottom = (a[THUMB_TIP][1] + b[THUMB_TIP][1]) / 2
+    apart = abs(a[WRIST][0] - b[WRIST][0]) / s
+    return idx < 0.7 and thb < 0.7 and (bottom - top) / s > 0.45 and apart > 0.6
+
+
+class MirrorTracker:
+    """Decides when the orb should copy a gesture: held steady for HOLD seconds, released after GRACE without it."""
+    HOLD = 0.45
+    GRACE = 0.8
+
+    def __init__(self):
+        self.cand, self.cand_since = None, 0.0
+        self.shown, self.last_seen = None, 0.0
+
+    def update(self, hands: list, t: float) -> dict | None:
+        """hands: landmark lists. Returns an event dict when what the orb shows changes, else None."""
+        pose = None
+        if len(hands) >= 2 and heart_pose(hands[0], hands[1]):
+            pose = "heart"
+        else:
+            poses = [mirror_pose(h) for h in hands]
+            pose = next((p for p in poses if p), None)
+            if pose:
+                hands = [h for h, p in zip(hands, poses) if p == pose]
+        if pose != self.cand:
+            self.cand, self.cand_since = pose, t
+        if pose:
+            self.last_seen = t
+        if pose and t - self.cand_since >= self.HOLD and pose != self.shown:
+            self.shown = pose
+            return {"shape": pose, "hands": [[[round(p[0], 3), round(p[1], 3), round(p[2] if len(p) > 2 else 0.0, 3)]
+                                              for p in h] for h in hands]}
+        if self.shown and not pose and t - self.last_seen >= self.GRACE:
+            self.shown = None
+            return {"shape": None, "hands": []}
+        return None
+
+
 # --------------------------------------------------------------------------- camera consumer
 class GestureControl:
     """The hand tracker. Reads frames from the shared CameraHub (camera.py) and calls on_gesture(name) and
@@ -207,11 +298,13 @@ class GestureControl:
     FPS_IDLE = 6          # no hand for a while: look less often
     IDLE_AFTER = 6.0
 
-    def __init__(self, settings: dict, on_gesture, on_hand, hub=None):
+    def __init__(self, settings: dict, on_gesture, on_hand, hub=None, on_mirror=None):
         from .camera import CameraHub
         self.settings = settings
         self.on_gesture = on_gesture
         self.on_hand = on_hand
+        self.on_mirror = on_mirror       # callable({shape, hands}): the orb copies a held gesture
+        self.mirror = MirrorTracker()
         self.hub = hub or CameraHub(settings)
         self.clf = GestureClassifier(self._cfg().get("sensitivity", 0.5))
         self._tracker = None
@@ -260,7 +353,7 @@ class GestureControl:
             from mediapipe.tasks.python import BaseOptions, vision
             opts = vision.HandLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=str(MODEL_PATH)),
-                running_mode=vision.RunningMode.VIDEO, num_hands=1,
+                running_mode=vision.RunningMode.VIDEO, num_hands=2,   # two hands: a heart
                 min_hand_detection_confidence=0.6, min_hand_presence_confidence=0.5, min_tracking_confidence=0.5)
             self._tracker = vision.HandLandmarker.create_from_options(opts)
         except Exception as e:  # noqa: BLE001
@@ -301,7 +394,12 @@ class GestureControl:
         ts = max(int((tick - self._t0) * 1000), self._last_ts + 1)
         self._last_ts = ts
         res = tracker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame), ts)
-        lm = [(p.x, p.y, p.z) for p in res.hand_landmarks[0]] if res.hand_landmarks else None
+        hands = [[(p.x, p.y, p.z) for p in h] for h in (res.hand_landmarks or [])]
+        lm = hands[0] if hands else None
+        if self.on_mirror is not None and self._cfg().get("mirror", True):
+            ev = self.mirror.update(hands, tick)
+            if ev is not None:
+                self._safe(self.on_mirror, ev)
         self.clf.set_sensitivity(self._cfg().get("sensitivity", 0.5))
         fired = self.clf.update(lm, tick)
         was_visible, self.hand_visible = self.hand_visible, lm is not None
@@ -328,5 +426,5 @@ class GestureControl:
             print(f"[jarvis] gesture handler failed: {e}")
 
 
-__all__ = ["GestureClassifier", "GestureControl", "describe_pose", "window_keys", "ensure_model", "model_ready",
+__all__ = ["GestureClassifier", "GestureControl", "MirrorTracker", "mirror_pose", "heart_pose", "describe_pose", "window_keys", "ensure_model", "model_ready",
            "MODEL_PATH", "GESTURES", "Path"]

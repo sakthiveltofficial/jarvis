@@ -12,8 +12,8 @@ import threading
 import time
 import traceback
 
-from . import config, health, lifelog, llm, presence
-from .ambient import DO_NOT_DISTURB, PHRASE_SYSTEM, idle_seconds, in_quiet_hours
+from . import character, config, health, lifelog, llm, presence
+from .ambient import DO_NOT_DISTURB, idle_seconds, in_quiet_hours, phrase_system
 from .tools import ToolOutput
 
 STATE_FILE = config.HOME / "life_state.json"
@@ -75,7 +75,6 @@ class Wellbeing:
 
     def phrase(self, kind: str, idea: str, fallback: str) -> str:
         st = self.s.settings
-        user = st.get("user_name") or "the user"
         from .lang import LABELS
         lang = LABELS.get(getattr(self.s, "last_lang", ""), "")
         extra = ""
@@ -87,7 +86,7 @@ class Wellbeing:
             except Exception:  # noqa: BLE001
                 pass
         try:
-            line = llm.complete(st, PHRASE_SYSTEM.format(name=st.get("assistant_name") or "Jarvis", user=user),
+            line = llm.complete(st, phrase_system(st),
                                 f"Idea: {idea}{extra}\nLanguage hint: {lang or 'English'}", max_tokens=80,
                                 model=(st.get("ambient") or {}).get("model") or None).strip().strip('"')
             if line and len(line) < 300:
@@ -135,8 +134,7 @@ class Wellbeing:
             self.s.emit({"type": "assistant", "text": f"🚨 {text} ({when})" + (
                 f" Photo saved: {data['photo']}" if data.get("photo") else ""), "proactive": "presence"})
             try:
-                self.s.speak("Hello. I don't believe we've met. This computer is locked." if locked else
-                             "Hello. I don't believe we've met.")
+                self.s.speak(character.stranger_line(self.s.settings, locked))
             except Exception:  # noqa: BLE001
                 pass
             self.s.context_notes.append(f"At {when} an unknown person sat at the computer while the user was away"
@@ -158,6 +156,7 @@ class Wellbeing:
 
     def _say(self, kind: str, idea: str, fallback: str):
         user = self.s.settings.get("user_name") or ""
+        fallback = character.fallback(self.s.settings, kind, fallback)
         line = self.phrase(kind, idea, fallback.replace("{user_sep}", f", {user}" if user else ""))
         self.s.announce(line, "presence" if kind == "greet" else "health")
 
@@ -249,8 +248,7 @@ class Wellbeing:
             try:
                 from .lang import LABELS
                 st_ = self.s.settings
-                text = llm.complete(st_, lifelog.REPORT_SYSTEM.format(name=st_.get("assistant_name") or "Jarvis",
-                                                                    user=user or "the user"),
+                text = llm.complete(st_, lifelog.report_system(st_, user or "the user"),
                                     lifelog.report_prompt(st, prev, goals, diary,
                                                           LABELS.get(getattr(self.s, "last_lang", ""), "")),
                                     max_tokens=700, model=self.cfg("life").get("model") or None).strip()

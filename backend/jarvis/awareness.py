@@ -15,14 +15,14 @@ import re
 import threading
 import time
 
-from . import llm
+from . import character, llm
 from .tools import active_window_title
 
 SYSTEM = """You are glancing at a user's screen on behalf of their personal assistant. Decide if there is a
 clear, specific problem right now that the assistant could solve for them: an error message or dialog,
 a failed build or test run, a crash, a stuck installer, a broken page. Ordinary work (reading, writing,
 browsing, videos, games, chats) is NOT a problem. Never comment on private content.
-If there is a clear problem, reply with one short, friendly spoken offer (under 20 words) that names it,
+If there is a clear problem, reply with one short, {offer} spoken offer (under 20 words) that names it,
 like "I see the build failed with a missing module error. Want me to fix it?". Otherwise reply exactly NONE."""
 
 ERRORISH = re.compile(r"error|exception|failed|failure|crash|not responding|traceback|denied|problem|warning", re.I)
@@ -65,7 +65,7 @@ class Awareness:
             return None
         title = active_window_title()
         vision = bool(self.s.settings["llm"].get("vision"))
-        if title and title.lower().startswith(self.s.settings.get("assistant_name", "Jarvis").lower()):
+        if title and title.lower().startswith(character.name(self.s.settings).lower()):
             return None                                   # looking at Jarvis itself
         img = None
         if vision:
@@ -87,7 +87,7 @@ class Awareness:
         self.last_title = title
         prompt = f"Active window: {title or '(unknown)'}\nIs there a clear problem worth offering help with?"
         model = self.cfg().get("model") or None
-        reply = llm.complete(self.s.settings, SYSTEM, prompt, max_tokens=80, images=[img] if img else None,
+        reply = llm.complete(self.s.settings, SYSTEM.replace("{offer}", character.get(self.s.settings)["offer"]), prompt, max_tokens=80, images=[img] if img else None,
                              model=model).strip()
         if not reply or reply.upper().startswith("NONE") or len(reply) > 240:
             return None

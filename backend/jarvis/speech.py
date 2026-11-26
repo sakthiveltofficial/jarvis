@@ -137,10 +137,23 @@ class TTS:
     _noticed: set = set()
 
     def __init__(self, settings: dict):
+        from . import character
         self.s = settings
-        self.cfg = settings["tts"]
+        self.base = settings["tts"]
+        self.cfg = character.tts_cfg(settings)     # the character's voice laid over the chosen provider
 
     def synthesize(self, text: str, style: dict | None = None) -> tuple[np.ndarray, int]:
+        try:
+            return self._synthesize(text, style)
+        except Exception as e:  # noqa: BLE001
+            if self.cfg is self.base or self.cfg == self.base:
+                raise
+            # the character's voice isn't available (e.g. not downloaded yet, offline): use the user's own voice
+            self._notice(f"The character's voice isn't available ({e}); using your usual voice.")
+            self.cfg = self.base
+            return self._synthesize(text, style)
+
+    def _synthesize(self, text: str, style: dict | None = None) -> tuple[np.ndarray, int]:
         """style (optional, from emotion.STYLES): speed multiplier, instructions, stability, style."""
         self.style = style or {}
         p = self.cfg.get("provider", "piper")
@@ -273,9 +286,13 @@ class TTS:
         client = OpenAI(api_key=config.api_key(self.s, "openai"))
         model = self.cfg.get("openai_model", "gpt-4o-mini-tts")
         kw = {}
-        st = getattr(self, "style", {})
-        if st.get("instructions") and "gpt-4o" in model:
-            kw["instructions"] = st["instructions"]
+        if self.cfg is not self.base:
+            from . import character
+            instr = character.voice_instructions(self.s, getattr(self, "style", {}))
+        else:
+            instr = getattr(self, "style", {}).get("instructions") or ""
+        if instr and "gpt-4o" in model:
+            kw["instructions"] = instr
         if abs(self._speed() - 1.0) > 0.01:
             kw["speed"] = self._speed()
         r = client.audio.speech.create(model=model, voice=self.cfg.get("openai_voice", "onyx"), input=text,

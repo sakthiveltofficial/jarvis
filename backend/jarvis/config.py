@@ -30,6 +30,8 @@ LLM_PRESETS = {
 
 DEFAULTS = {
     "assistant_name": "Jarvis",
+    "character": "jarvis",             # jarvis (friendly, calm, blue orb) | ultron (theatrical villain, red orb)
+    "character_voice": True,           # speak in the character's own voice (Ultron: deeper and colder)
     "user_name": "",
     "llm": {
         "provider": "anthropic",
@@ -109,6 +111,7 @@ DEFAULTS = {
     "voice": {
         "mode": "wake",                # off | wake ("Hey Jarvis") | handsfree (always listening)
         "wake_word": "hey_jarvis",
+        "wake_phrase": "",             # your own wake phrase ("" = the built-in "Hey Jarvis"); train it to use it
         "wake_threshold": 0.5,
         "listen_s": 8,                 # after the wake word, how long to wait for you to start talking
         "follow_up_s": 10,             # after I reply, keep listening this long without the wake word
@@ -136,6 +139,7 @@ DEFAULTS = {
         "fist": True,                  # fist: stop what I'm doing
         "windows": True,               # swipes switch, maximise and minimise windows
         "orb": True,                   # pinch and move to spin the orb, quick pinch shows/hides my window
+        "mirror": True,                # the orb copies gestures you hold up (heart, thumbs up, peace, rock...)
     },
     "presence": {                      # face at the desk (see presence.py); shares the webcam with gestures
         "enabled": False,              # off until you turn it on: it uses the camera
